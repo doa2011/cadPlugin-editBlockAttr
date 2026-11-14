@@ -32,10 +32,13 @@ namespace AutoCADBlockAttrPlugin
                 PackagePart sheet = package.CreatePart(sheetUri,
                     "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml");
                 package.CreateRelationship(new Uri("xl/workbook.xml", UriKind.Relative), TargetMode.Internal, OfficeRel);
-                workbook.CreateRelationship(new Uri("worksheets/sheet1.xml", UriKind.Relative),
+                PackageRelationship sheetRelationship = workbook.CreateRelationship(
+                    new Uri("worksheets/sheet1.xml", UriKind.Relative),
                     TargetMode.Internal, WorksheetRel);
 
-                using (XmlWriter xw = XmlWriter.Create(workbook.GetStream(FileMode.Create, FileAccess.Write)))
+                using (XmlWriter xw = XmlWriter.Create(
+                    workbook.GetStream(FileMode.Create, FileAccess.Write),
+                    new XmlWriterSettings { CloseOutput = true }))
                 {
                     xw.WriteStartDocument();
                     xw.WriteStartElement("workbook", MainNs);
@@ -44,14 +47,16 @@ namespace AutoCADBlockAttrPlugin
                     xw.WriteStartElement("sheet", MainNs);
                     xw.WriteAttributeString("name", "属性数据");
                     xw.WriteAttributeString("sheetId", "1");
-                    xw.WriteAttributeString("r", "id", RelNs, "rId1");
+                    xw.WriteAttributeString("r", "id", RelNs, sheetRelationship.Id);
                     xw.WriteEndElement();
                     xw.WriteEndElement();
                     xw.WriteEndElement();
                     xw.WriteEndDocument();
                 }
 
-                using (XmlWriter xw = XmlWriter.Create(sheet.GetStream(FileMode.Create, FileAccess.Write)))
+                using (XmlWriter xw = XmlWriter.Create(
+                    sheet.GetStream(FileMode.Create, FileAccess.Write),
+                    new XmlWriterSettings { CloseOutput = true }))
                 {
                     xw.WriteStartDocument();
                     xw.WriteStartElement("worksheet", MainNs);
