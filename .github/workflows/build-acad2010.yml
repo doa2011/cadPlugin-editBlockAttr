@@ -1,0 +1,27 @@
+name: AutoCAD 2010 compile check
+
+on:
+  push:
+    branches:
+      - master
+      - "feature/**"
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  build-acad-2010:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Restore and build AutoCAD 2010 target
+        run: dotnet build AutoCADBlockAttrPlugin/AutoCADBlockAttrPlugin.csproj --configuration Release --verbosity minimal
+      - name: Upload plugin DLL
+        uses: actions/upload-artifact@v4
+        with:
+          name: AutoCADBlockAttrPlugin-net35
+          path: AutoCADBlockAttrPlugin/bin/Release/AutoCADBlockAttrPlugin.dll
+          if-no-files-found: error
