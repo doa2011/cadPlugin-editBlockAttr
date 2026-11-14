@@ -338,7 +338,7 @@ namespace AutoCADBlockAttrPlugin
         }
     }
 
-    public class AttrModForm : Form
+    public partial class AttrModForm : Form
     {
         /// <summary>属性栏中的一行：TAG、所选块上的默认值、勾选框、统一修改输入框。</summary>
         private sealed class AttrRow
@@ -378,6 +378,7 @@ namespace AutoCADBlockAttrPlugin
 
             InitializeComponent();
             LoadAttributes();
+            InitializeExtendedTabs();
         }
 
         private void InitializeComponent()
@@ -598,7 +599,10 @@ namespace AutoCADBlockAttrPlugin
                 chk.CheckedChanged += delegate(object s, EventArgs e)
                 {
                     txtValue.Enabled = !chk.Checked;
-                    txtValue.Text = chk.Checked ? "" : current.DefaultValue;
+                    if (chk.Checked)
+                        txtValue.Tag = txtValue.Text;
+                    else if (txtValue.Tag != null)
+                        txtValue.Text = txtValue.Tag.ToString();
                 };
 
                 current.ChkSequential = chk;
@@ -754,9 +758,10 @@ namespace AutoCADBlockAttrPlugin
 
                             if (!string.Equals(ar.TextString, newValue,
                                                StringComparison.Ordinal))
+                            {
                                 ar.TextString = newValue;
-
-                            modified++;
+                                modified++;
+                            }
                         }
                     }
 
