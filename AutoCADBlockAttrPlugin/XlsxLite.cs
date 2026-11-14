@@ -31,7 +31,7 @@ namespace AutoCADBlockAttrPlugin
                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml");
                 PackagePart sheet = package.CreatePart(sheetUri,
                     "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml");
-                package.CreateRelationship(workbookUri, TargetMode.Internal, OfficeRel);
+                package.CreateRelationship(new Uri("xl/workbook.xml", UriKind.Relative), TargetMode.Internal, OfficeRel);
                 workbook.CreateRelationship(new Uri("worksheets/sheet1.xml", UriKind.Relative),
                     TargetMode.Internal, WorksheetRel);
 
@@ -44,7 +44,7 @@ namespace AutoCADBlockAttrPlugin
                     xw.WriteStartElement("sheet", MainNs);
                     xw.WriteAttributeString("name", "属性数据");
                     xw.WriteAttributeString("sheetId", "1");
-                    xw.WriteAttributeString("r", "id", RelNs, workbook.GetRelationshipsByType(WorksheetRel).GetEnumerator().MoveNext() ? "rId1" : "rId1");
+                    xw.WriteAttributeString("r", "id", RelNs, "rId1");
                     xw.WriteEndElement();
                     xw.WriteEndElement();
                     xw.WriteEndElement();
