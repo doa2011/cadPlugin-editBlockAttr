@@ -14,6 +14,8 @@ namespace AutoCADBlockAttrPlugin
         private ComboBox _angleDrawingNo;
         private ComboBox _anglePageNo;
         private ComboBox _anglePageTotal;
+        private TextBox _angleTitleValue;
+        private TextBox _angleDrawingNoValue;
         private DataGridView _xlsxPreview;
         private readonly List<XlsxChange> _xlsxChanges = new List<XlsxChange>();
 
@@ -79,23 +81,42 @@ namespace AutoCADBlockAttrPlugin
             sort.Controls.Add(top);
             page.Controls.Add(sort);
 
+            Label titleLabel = new Label();
+            titleLabel.Text = "图名（自动读取，可修改）";
+            titleLabel.Location = new System.Drawing.Point(25, 335);
+            titleLabel.Size = new System.Drawing.Size(180, 22);
+            _angleTitleValue = new TextBox();
+            _angleTitleValue.Location = new System.Drawing.Point(210, 332);
+            _angleTitleValue.Size = new System.Drawing.Size(450, 24);
+            Label numberLabel = new Label();
+            numberLabel.Text = "图号（自动读取，可修改）";
+            numberLabel.Location = new System.Drawing.Point(25, 375);
+            numberLabel.Size = new System.Drawing.Size(180, 22);
+            _angleDrawingNoValue = new TextBox();
+            _angleDrawingNoValue.Location = new System.Drawing.Point(210, 372);
+            _angleDrawingNoValue.Size = new System.Drawing.Size(450, 24);
+            page.Controls.Add(titleLabel);
+            page.Controls.Add(_angleTitleValue);
+            page.Controls.Add(numberLabel);
+            page.Controls.Add(_angleDrawingNoValue);
+
             Label fileInfo = new Label();
             fileInfo.Name = "AngleFileInfo";
-            fileInfo.Location = new System.Drawing.Point(20, 335);
-            fileInfo.Size = new System.Drawing.Size(700, 70);
+            fileInfo.Location = new System.Drawing.Point(20, 415);
+            fileInfo.Size = new System.Drawing.Size(700, 55);
             UpdateAngleFileInfo(fileInfo);
             page.Controls.Add(fileInfo);
 
             Button apply = new Button();
             apply.Text = "自动填写角标";
-            apply.Location = new System.Drawing.Point(20, 430);
+            apply.Location = new System.Drawing.Point(20, 485);
             apply.Size = new System.Drawing.Size(130, 34);
             apply.Click += delegate { ApplyAngleValues(left.Checked); };
             page.Controls.Add(apply);
 
             Label note = new Label();
             note.Text = "提示：四个字段分别映射到块的实际属性 TAG；映射不能为空且不能重复。总页数按本次选中的同名块数量统计。";
-            note.Location = new System.Drawing.Point(20, 485);
+            note.Location = new System.Drawing.Point(20, 535);
             note.Size = new System.Drawing.Size(700, 55);
             page.Controls.Add(note);
 
@@ -124,8 +145,9 @@ namespace AutoCADBlockAttrPlugin
             string no;
             string title;
             SplitName(file, out no, out title);
-            label.Text = "当前 DWG：" + file + "\r\n自动识别图号：" + no +
-                "    图名：" + title + "\r\n匹配块数量 / 自动共几页：" + _blockIds.Length;
+            label.Text = "当前 DWG：" + file + "\r\n文件名解析规则：图号 空格 图名；共几页自动统计匹配块数量：" + _blockIds.Length;
+            if (_angleDrawingNoValue != null) _angleDrawingNoValue.Text = no;
+            if (_angleTitleValue != null) _angleTitleValue.Text = title;
         }
 
         private static void SplitName(string file, out string no, out string title)
@@ -184,6 +206,8 @@ namespace AutoCADBlockAttrPlugin
             string drawingNo;
             string drawingTitle;
             SplitName(file, out drawingNo, out drawingTitle);
+            if (_angleDrawingNoValue != null) drawingNo = _angleDrawingNoValue.Text;
+            if (_angleTitleValue != null) drawingTitle = _angleTitleValue.Text;
             Document doc = CadHost.ActiveDocument;
             int changed = 0;
             int missing = 0;
