@@ -152,7 +152,9 @@ def verify(made):
             ('加载结果横幅', '加载结果：成功'.encode('utf-16-le') in data, ''),
             ('用法简介', '用法    ：'.encode('utf-16-le') in data, ''),
             ('帮助命令', b'EditBlockAttHelp' in data, ''),
-            ('程序集版本 1.1', b'1.1.0.0' in data, ''),
+            ('程序集版本 1.2', b'1.2.0.0' in data, ''),
+            ('角标标签页', '角标修改'.encode('utf-16-le') in data, ''),
+            ('XLSX导入导出', b'XlsxLite' in data, ''),
         ]
         bad = [n for n, good, _ in checks if not good]
         ok &= not bad
