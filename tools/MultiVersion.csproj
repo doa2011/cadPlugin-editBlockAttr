@@ -1,0 +1,56 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    多版本构建用参数化工程。不要直接在 VS 中打开本文件，
+    请用 build_all.bat / tools\build_all.py 传入下列属性：
+
+      AcadNetFx   : net35 / net40 / net45 / net46 / net472 / net48
+      AcadRefDir  : 该版本编译期引用目录（acmgd / acdbmgd / accoremgd）
+      AcadOutDir  : 输出目录（须以反斜杠结尾）
+      AcadSrcDir  : 源码目录（含 BlockAttrPlugin.cs 与 Properties\AssemblyInfo.cs）
+      AcadDefines : 额外的条件编译常量（2013 及以后传 ACAD_2013_PLUS）
+  -->
+  <PropertyGroup>
+    <TargetFramework>$(AcadNetFx)</TargetFramework>
+    <OutputType>Library</OutputType>
+    <RootNamespace>AutoCADBlockAttrPlugin</RootNamespace>
+    <AssemblyName>AutoCADBlockAttrPlugin</AssemblyName>
+    <LangVersion>3</LangVersion>
+    <PlatformTarget>x64</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <OutputPath>$(AcadOutDir)</OutputPath>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <WarningLevel>4</WarningLevel>
+    <AutoGenerateBindingRedirects>false</AutoGenerateBindingRedirects>
+    <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
+    <GenerateDependencyFile>false</GenerateDependencyFile>
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <DefineConstants>$(DefineConstants);$(AcadDefines)</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="$(AcadSrcDir)\BlockAttrPlugin.cs" />
+    <Compile Include="$(AcadSrcDir)\Properties\AssemblyInfo.cs" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="AcMgd">
+      <HintPath>$(AcadRefDir)\acmgd.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="AcDbMgd">
+      <HintPath>$(AcadRefDir)\acdbmgd.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <!-- 2013 起 AutoCAD 把部分 API 拆到 accoremgd.dll；2010~2012 无此文件 -->
+    <Reference Include="AcCoreMgd" Condition="Exists('$(AcadRefDir)\accoremgd.dll')">
+      <HintPath>$(AcadRefDir)\accoremgd.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(AcadNetFx)' == 'net35'">
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net35" Version="1.0.3" PrivateAssets="All" />
+  </ItemGroup>
+</Project>

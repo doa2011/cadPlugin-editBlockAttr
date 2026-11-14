@@ -1,0 +1,48 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    AutoCADBlockAttrPlugin - AutoCAD 2010 (18.0s / CLR 2.0 / x64) 插件
+    目标框架必须是 .NET Framework 3.5（CLR 2.0）。
+    原来的 v4.8 会生成 ImageRuntime = v4.0.30319 的程序集，
+    在 AutoCAD 2010 中 NETLOAD 会抛 BadImageFormatException：
+    「生成此程序集的运行时比当前加载的运行时新，无法加载此程序集」。
+
+    使用 SDK 风格项目，让 NuGet 引用程序集还原在 VS2022 与命令行 MSBuild 下一致；
+    本机未安装 .NET Framework 3.5 Targeting Pack，由 NuGet 包提供编译期引用。
+    lib\ 下是与目标 AutoCAD 2010 完全相同的托管接口 DLL（CLR 2.0 / x64），
+    Private=False 表示只在编译期引用，不复制到输出目录、不参与部署。
+  -->
+  <PropertyGroup>
+    <TargetFramework>net35</TargetFramework>
+    <OutputType>Library</OutputType>
+    <RootNamespace>AutoCADBlockAttrPlugin</RootNamespace>
+    <AssemblyName>AutoCADBlockAttrPlugin</AssemblyName>
+    <LangVersion>3</LangVersion>
+    <PlatformTarget>x64</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <OutputPath>bin\$(Configuration)\</OutputPath>
+    <WarningLevel>4</WarningLevel>
+    <AutoGenerateBindingRedirects>false</AutoGenerateBindingRedirects>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- SDK 对 .NET Framework 目标已默认引用 System / System.Core / System.Data / System.Xml -->
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="AcMgd">
+      <HintPath>..\lib\AcMgd.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="AcDbMgd">
+      <HintPath>..\lib\AcDbMgd.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 仅编译期提供 .NET 3.5 引用程序集；不参与部署 -->
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net35" Version="1.0.3" PrivateAssets="All" />
+  </ItemGroup>
+</Project>
