@@ -527,7 +527,8 @@ namespace AutoCADBlockAttrPlugin
                             tr.GetObject(attId, OpenMode.ForRead)
                             as AttributeReference;
 
-                        if (ar == null || string.IsNullOrEmpty(ar.Tag))
+                        if (ar == null || string.IsNullOrEmpty(ar.Tag) ||
+                            string.Equals(ar.Tag, "Origin", StringComparison.OrdinalIgnoreCase))
                             continue;
 
                         string tag = ar.Tag;
