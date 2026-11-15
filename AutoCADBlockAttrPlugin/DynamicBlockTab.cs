@@ -34,6 +34,8 @@ namespace AutoCADBlockAttrPlugin
             new Dictionary<string, ObjectId>(StringComparer.OrdinalIgnoreCase);
         private DataGridView _grid;
         private Label _status;
+        private RadioButton _sortLeftRight;
+        private RadioButton _sortTopBottom;
         private readonly Dictionary<string, int> _columns =
             new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
@@ -74,9 +76,20 @@ namespace AutoCADBlockAttrPlugin
             _status.SetBounds(370, 8, 800, 34);
             _status.Text = "每行一个动态块，每列一个动态参数；空白单元格不修改。";
 
+            _sortLeftRight = new RadioButton();
+            _sortLeftRight.Text = "从左至右";
+            _sortLeftRight.SetBounds(375, 14, 90, 24);
+            _sortLeftRight.Checked = true;
+
+            _sortTopBottom = new RadioButton();
+            _sortTopBottom.Text = "从上到下";
+            _sortTopBottom.SetBounds(465, 14, 90, 24);
+
             toolbar.Controls.Add(export);
             toolbar.Controls.Add(import);
             toolbar.Controls.Add(apply);
+            toolbar.Controls.Add(_sortLeftRight);
+            toolbar.Controls.Add(_sortTopBottom);
             toolbar.Controls.Add(_status);
 
             _grid = new DataGridView();
@@ -97,6 +110,16 @@ namespace AutoCADBlockAttrPlugin
             page.Controls.Add(toolbar);
 
             LoadParametersAndRows();
+
+            _sortLeftRight.CheckedChanged += delegate
+            {
+                if (_sortLeftRight.Checked) SortGridRows();
+            };
+            _sortTopBottom.CheckedChanged += delegate
+            {
+                if (_sortTopBottom.Checked) SortGridRows();
+            };
+            SortGridRows();
         }
 
         private void LoadParametersAndRows()
@@ -129,6 +152,9 @@ namespace AutoCADBlockAttrPlugin
                 foreach (DynamicBlockReferenceProperty prop in sample.DynamicBlockReferencePropertyCollection)
                 {
                     if (prop == null || String.IsNullOrEmpty(prop.PropertyName)) continue;
+                    // Origin 是 AutoCAD 动态块内部辅助属性，不作为可编辑参数展示。
+                    if (String.Equals(prop.PropertyName, "Origin",
+                        StringComparison.OrdinalIgnoreCase)) continue;
                     ParameterInfo info = new ParameterInfo();
                     info.Name = prop.PropertyName;
                     object value = prop.Value;
@@ -222,6 +248,76 @@ namespace AutoCADBlockAttrPlugin
                 "；参数列：" + _parameters.Count +
                 "。可直接编辑单元格，或导入 Excel 后确认写入。";
             RefreshHighlights();
+        }
+
+        /// <summary>
+        /// 按块参照插入点排序动态块表格。默认从左至右；可切换为从上到下。
+        /// 同一列/行内分别按 Y 降序/X 升序排列。
+        /// </summary>
+        private void SortGridRows()
+        {
+            if (_grid == null || _grid.Rows.Count < 2) return;
+
+            Document doc = CadHost.ActiveDocument;
+            if (doc == null) return;
+
+            Dictionary<string, Point3d> positions =
+                new Dictionary<string, Point3d>(StringComparer.OrdinalIgnoreCase);
+
+            using (Transaction tr = doc.TransactionManager.StartTransaction())
+            {
+                foreach (KeyValuePair<string, ObjectId> item in _ids)
+                {
+                    BlockReference br = tr.GetObject(item.Value, OpenMode.ForRead) as BlockReference;
+                    if (br != null) positions[item.Key] = br.Position;
+                }
+                tr.Commit();
+            }
+
+            List<object[]> rows = new List<object[]>();
+            foreach (DataGridViewRow row in _grid.Rows)
+            {
+                string handle = Convert.ToString(row.Cells[0].Value) ?? "";
+                Point3d p;
+                if (!positions.TryGetValue(handle, out p)) p = Point3d.Origin;
+
+                object[] values = new object[_grid.Columns.Count];
+                for (int c = 0; c < _grid.Columns.Count; c++)
+                    values[c] = row.Cells[c].Value;
+                rows.Add(values);
+
+                // 暂存坐标供排序使用，避免依赖字典遍历顺序。
+                row.Tag = p;
+            }
+
+            List<DataGridViewRow> ordered = _grid.Rows.Cast<DataGridViewRow>().ToList();
+            if (_sortTopBottom != null && _sortTopBottom.Checked)
+            {
+                ordered = ordered
+                    .OrderByDescending(r => ((Point3d)r.Tag).Y)
+                    .ThenBy(r => ((Point3d)r.Tag).X)
+                    .ToList();
+            }
+            else
+            {
+                ordered = ordered
+                    .OrderBy(r => ((Point3d)r.Tag).X)
+                    .ThenByDescending(r => ((Point3d)r.Tag).Y)
+                    .ToList();
+            }
+
+            List<object[]> sortedValues = new List<object[]>();
+            foreach (DataGridViewRow row in ordered)
+            {
+                object[] values = new object[_grid.Columns.Count];
+                for (int c = 0; c < _grid.Columns.Count; c++)
+                    values[c] = row.Cells[c].Value;
+                sortedValues.Add(values);
+            }
+
+            _grid.Rows.Clear();
+            foreach (object[] values in sortedValues)
+                _grid.Rows.Add(values);
         }
 
         private static Dictionary<string, DynamicBlockReferenceProperty> ReadProperties(BlockReference br)
