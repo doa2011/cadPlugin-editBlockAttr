@@ -275,44 +275,41 @@ namespace AutoCADBlockAttrPlugin
                 tr.Commit();
             }
 
+            List<KeyValuePair<Point3d, object[]>> ordered =
+                new List<KeyValuePair<Point3d, object[]>>();
+
             foreach (DataGridViewRow row in _grid.Rows)
             {
                 string handle = Convert.ToString(row.Cells[0].Value) ?? "";
-                Point3d p;
-                if (!positions.TryGetValue(handle, out p)) p = Point3d.Origin;
+                Point3d position;
+                if (!positions.TryGetValue(handle, out position))
+                    position = Point3d.Origin;
 
-                // 暂存坐标供排序使用，避免依赖字典遍历顺序。
-                row.Tag = p;
+                object[] values = new object[_grid.Columns.Count];
+                for (int c = 0; c < _grid.Columns.Count; c++)
+                    values[c] = row.Cells[c].Value;
+
+                ordered.Add(new KeyValuePair<Point3d, object[]>(position, values));
             }
 
-            List<DataGridViewRow> ordered = _grid.Rows.Cast<DataGridViewRow>().ToList();
             if (_sortTopBottom != null && _sortTopBottom.Checked)
             {
                 ordered = ordered
-                    .OrderByDescending(r => ((Point3d)r.Tag).Y)
-                    .ThenBy(r => ((Point3d)r.Tag).X)
+                    .OrderByDescending(item => item.Key.Y)
+                    .ThenBy(item => item.Key.X)
                     .ToList();
             }
             else
             {
                 ordered = ordered
-                    .OrderBy(r => ((Point3d)r.Tag).X)
-                    .ThenByDescending(r => ((Point3d)r.Tag).Y)
+                    .OrderBy(item => item.Key.X)
+                    .ThenByDescending(item => item.Key.Y)
                     .ToList();
             }
 
-            List<object[]> sortedValues = new List<object[]>();
-            foreach (DataGridViewRow row in ordered)
-            {
-                object[] values = new object[_grid.Columns.Count];
-                for (int c = 0; c < _grid.Columns.Count; c++)
-                    values[c] = row.Cells[c].Value;
-                sortedValues.Add(values);
-            }
-
             _grid.Rows.Clear();
-            foreach (object[] values in sortedValues)
-                _grid.Rows.Add(values);
+            foreach (KeyValuePair<Point3d, object[]> item in ordered)
+                _grid.Rows.Add(item.Value);
         }
 
         private static Dictionary<string, DynamicBlockReferenceProperty> ReadProperties(BlockReference br)
