@@ -55,6 +55,8 @@ jobs:
 
       - name: Restore Autodesk AutoCAD 2024 API reference package
         shell: pwsh
+        env:
+          PYTHONIOENCODING: utf-8
         run: |
           $refDir = Join-Path $env:RUNNER_TEMP "acad-nuget-ref"
           New-Item -ItemType Directory -Force -Path $refDir | Out-Null
