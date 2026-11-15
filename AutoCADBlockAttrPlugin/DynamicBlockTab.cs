@@ -74,7 +74,7 @@ namespace AutoCADBlockAttrPlugin
 
             _status = new Label();
             _status.AutoEllipsis = true;
-            _status.SetBounds(370, 8, 800, 34);
+            _status.SetBounds(570, 8, 600, 34);
             _status.Text = "每行一个动态块，每列一个动态参数；空白单元格不修改。";
 
             _sortLeftRight = new RadioButton();
