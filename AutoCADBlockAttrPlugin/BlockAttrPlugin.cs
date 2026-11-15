@@ -385,10 +385,11 @@ namespace AutoCADBlockAttrPlugin
         {
             Text = "块属性批量修改器";
             Size = new Size(760, 560);
-            FormBorderStyle = FormBorderStyle.FixedDialog;
+            FormBorderStyle = FormBorderStyle.Sizable;
             StartPosition = FormStartPosition.CenterParent;
-            MaximizeBox = false;
-            MinimizeBox = false;
+            MaximizeBox = true;
+            MinimizeBox = true;
+            MinimumSize = new Size(1000, 700);
 
             Label lblBlock = new Label()
             {
