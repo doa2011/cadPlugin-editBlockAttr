@@ -80,6 +80,7 @@ jobs:
         shell: pwsh
         env:
           BUILD_YEAR: ${{ github.event.inputs.version || 'all' }}
+          PYTHONIOENCODING: utf-8
         run: |
           python tools/build_all.py --year "$env:BUILD_YEAR"
           if ($LASTEXITCODE -ne 0) { throw "AutoCAD build or verification failed" }
