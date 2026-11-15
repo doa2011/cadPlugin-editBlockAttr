@@ -310,6 +310,7 @@ namespace AutoCADBlockAttrPlugin
             _grid.Rows.Clear();
             foreach (KeyValuePair<Point3d, object[]> item in ordered)
                 _grid.Rows.Add(item.Value);
+            RefreshHighlights();
         }
 
         private static Dictionary<string, DynamicBlockReferenceProperty> ReadProperties(BlockReference br)
