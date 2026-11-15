@@ -1,6 +1,13 @@
 name: Build and Release AutoCAD Plugin
 
 on:
+  push:
+    branches:
+      - feature/xlsx-and-titleblock-tabs
+    paths:
+      - "AutoCADBlockAttrPlugin/**"
+      - "tools/**"
+      - ".github/workflows/build-acad2010.yml"
   workflow_dispatch:
     inputs:
       version:
@@ -69,21 +76,31 @@ jobs:
 
       - name: Build selected AutoCAD version(s)
         shell: pwsh
+        env:
+          BUILD_YEAR: ${{ github.event.inputs.version || 'all' }}
         run: |
-          python tools/build_all.py --year "${{ inputs.version }}"
+          python tools/build_all.py --year "$env:BUILD_YEAR"
           if ($LASTEXITCODE -ne 0) { throw "AutoCAD build or verification failed" }
 
           if (-not (Test-Path "dist_all/*.dll")) {
             throw "No DLL files were generated"
           }
 
-          Compress-Archive -Path "dist_all/*.dll" -DestinationPath "dist_all/AutoCADBlockAttrPlugin-${{ inputs.version }}.zip" -Force
+          Compress-Archive -Path "dist_all/*.dll" -DestinationPath "dist_all/AutoCADBlockAttrPlugin-$env:BUILD_YEAR.zip" -Force
+
+      - name: Upload build package
+        uses: actions/upload-artifact@v4
+        with:
+          name: AutoCADBlockAttrPlugin-${{ github.event.inputs.version || 'all' }}
+          path: dist_all/*
+          if-no-files-found: error
 
       - name: Publish GitHub Release
+        if: github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: "v1.2.0-${{ inputs.version }}-${{ github.run_number }}"
-          name: "AutoCADBlockAttrPlugin 1.2.0 - AutoCAD ${{ inputs.version }}"
+          tag_name: "v1.2.0-${{ github.event.inputs.version || 'all' }}-${{ github.run_number }}"
+          name: "AutoCADBlockAttrPlugin 1.2.0 - AutoCAD ${{ github.event.inputs.version || 'all' }}"
           target_commitish: "${{ github.sha }}"
           generate_release_notes: true
           files: |
