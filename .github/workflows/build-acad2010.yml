@@ -76,14 +76,21 @@ jobs:
       - name: Build selected AutoCAD version(s)
         shell: pwsh
         run: |
+          # 清理旧产物，确保单版本构建的压缩包不会混入其他年份的 DLL。
+          if (Test-Path "dist_all") {
+            Remove-Item "dist_all" -Recurse -Force
+          }
+          New-Item -ItemType Directory -Force -Path "dist_all" | Out-Null
+
           python tools/build_all.py --year "${{ inputs.version || 'all' }}"
           if ($LASTEXITCODE -ne 0) { throw "AutoCAD build or verification failed" }
 
-          if (-not (Test-Path "dist_all/*.dll")) {
+          $dlls = Get-ChildItem "dist_all" -Filter "*.dll" -File
+          if ($dlls.Count -eq 0) {
             throw "No DLL files were generated"
           }
 
-          Compress-Archive -Path "dist_all/*.dll" -DestinationPath "dist_all/AutoCADBlockAttrPlugin-${{ inputs.version || 'all' }}.zip" -Force
+          Compress-Archive -Path $dlls.FullName -DestinationPath "dist_all/AutoCADBlockAttrPlugin-AutoCAD-${{ inputs.version || 'all' }}.zip" -Force
 
       - name: Publish GitHub Release
         if: github.event_name == 'workflow_dispatch'
