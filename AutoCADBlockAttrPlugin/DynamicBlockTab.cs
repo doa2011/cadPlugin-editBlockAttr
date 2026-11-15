@@ -7,6 +7,7 @@ using System.Windows.Forms;
 using System.Drawing;
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
+using Autodesk.AutoCAD.Geometry;
 
 namespace AutoCADBlockAttrPlugin
 {
@@ -274,17 +275,11 @@ namespace AutoCADBlockAttrPlugin
                 tr.Commit();
             }
 
-            List<object[]> rows = new List<object[]>();
             foreach (DataGridViewRow row in _grid.Rows)
             {
                 string handle = Convert.ToString(row.Cells[0].Value) ?? "";
                 Point3d p;
                 if (!positions.TryGetValue(handle, out p)) p = Point3d.Origin;
-
-                object[] values = new object[_grid.Columns.Count];
-                for (int c = 0; c < _grid.Columns.Count; c++)
-                    values[c] = row.Cells[c].Value;
-                rows.Add(values);
 
                 // 暂存坐标供排序使用，避免依赖字典遍历顺序。
                 row.Tag = p;
