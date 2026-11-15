@@ -112,6 +112,8 @@ namespace AutoCADBlockAttrPlugin
             SplitContainer split = new SplitContainer();
             split.Dock = DockStyle.Fill;
             split.Orientation = Orientation.Horizontal;
+            // 先设置初始尺寸，再设置分隔位置，避免 SplitContainer 在默认小尺寸下抛异常。
+            split.Size = new Size(1000, 700);
             split.SplitterDistance = 390;
             split.Panel1MinSize = 160;
             split.Panel2MinSize = 150;
