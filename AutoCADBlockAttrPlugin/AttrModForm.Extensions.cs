@@ -38,8 +38,10 @@ namespace AutoCADBlockAttrPlugin
             tabs.Dock = DockStyle.Fill;
             TabPage angle = new TabPage("角标修改");
             TabPage data = new TabPage("属性表格");
+            TabPage dynamic = new TabPage("动态块参数");
             tabs.TabPages.Add(angle);
             tabs.TabPages.Add(data);
+            tabs.TabPages.Add(dynamic);
 
             foreach (Control control in original)
             {
@@ -48,6 +50,7 @@ namespace AutoCADBlockAttrPlugin
             }
             BuildAngleTab(angle);
             BuildXlsxPanel(data);
+            DynamicBlockTab.Build(dynamic, _blockIds, _blockName);
             Controls.Add(tabs);
         }
 
