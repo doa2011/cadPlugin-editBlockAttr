@@ -38,7 +38,7 @@ namespace AutoCADBlockAttrPlugin
             TabControl tabs = new TabControl();
             tabs.Dock = DockStyle.Fill;
             TabPage angle = new TabPage("角标修改");
-            TabPage dynamic = new TabPage("动态块");
+            TabPage dynamic = new TabPage("动态块参数");
             tabs.TabPages.Add(angle);
             tabs.TabPages.Add(dynamic);
 
