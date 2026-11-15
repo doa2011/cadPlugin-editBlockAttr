@@ -1,0 +1,484 @@
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using System.Linq;
+using System.Windows.Forms;
+using System.Drawing;
+using Autodesk.AutoCAD.ApplicationServices;
+using Autodesk.AutoCAD.DatabaseServices;
+
+namespace AutoCADBlockAttrPlugin
+{
+    /// <summary>
+    /// 动态块参数批量工作区。每行一个块参照，每列一个动态参数；
+    /// 表格支持直接编辑、XLSX 导入预览和导出。
+    /// </summary>
+    internal sealed class DynamicBlockTab
+    {
+        private sealed class ParameterInfo
+        {
+            internal string Name;
+            internal string TypeName;
+            internal string Units;
+            internal bool ReadOnly;
+            internal object[] Allowed;
+        }
+
+        private readonly ObjectId[] _blockIds;
+        private readonly string _blockName;
+        private readonly List<ParameterInfo> _parameters = new List<ParameterInfo>();
+        private readonly Dictionary<string, string> _original =
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, ObjectId> _ids =
+            new Dictionary<string, ObjectId>(StringComparer.OrdinalIgnoreCase);
+        private DataGridView _grid;
+        private Label _status;
+        private readonly Dictionary<string, int> _columns =
+            new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        private DynamicBlockTab(ObjectId[] blockIds, string blockName)
+        {
+            _blockIds = blockIds ?? new ObjectId[0];
+            _blockName = blockName ?? "";
+        }
+
+        internal static void Build(Control page, ObjectId[] blockIds, string blockName)
+        {
+            new DynamicBlockTab(blockIds, blockName).Initialize(page);
+        }
+
+        private void Initialize(Control page)
+        {
+            Panel toolbar = new Panel();
+            toolbar.Dock = DockStyle.Top;
+            toolbar.Height = 58;
+
+            Button export = new Button();
+            export.Text = "导出 XLSX";
+            export.SetBounds(10, 8, 100, 30);
+            export.Click += delegate { ExportXlsx(); };
+
+            Button import = new Button();
+            import.Text = "导入并预览";
+            import.SetBounds(118, 8, 110, 30);
+            import.Click += delegate { ImportXlsx(); };
+
+            Button apply = new Button();
+            apply.Text = "确认写入 CAD";
+            apply.SetBounds(236, 8, 120, 30);
+            apply.Click += delegate { ApplyChanges(); };
+
+            _status = new Label();
+            _status.AutoEllipsis = true;
+            _status.SetBounds(370, 8, 800, 34);
+            _status.Text = "每行一个动态块，每列一个动态参数；空白单元格不修改。";
+
+            toolbar.Controls.Add(export);
+            toolbar.Controls.Add(import);
+            toolbar.Controls.Add(apply);
+            toolbar.Controls.Add(_status);
+
+            _grid = new DataGridView();
+            _grid.Dock = DockStyle.Fill;
+            _grid.AllowUserToAddRows = false;
+            _grid.AllowUserToDeleteRows = false;
+            _grid.AllowUserToOrderColumns = true;
+            _grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
+            _grid.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.None;
+            _grid.RowHeadersVisible = false;
+            _grid.SelectionMode = DataGridViewSelectionMode.CellSelect;
+            _grid.MultiSelect = true;
+            _grid.ScrollBars = ScrollBars.Both;
+            _grid.EditMode = DataGridViewEditMode.EditOnKeystrokeOrF2;
+            _grid.CellEndEdit += delegate { RefreshHighlights(); };
+
+            page.Controls.Add(_grid);
+            page.Controls.Add(toolbar);
+
+            LoadParametersAndRows();
+        }
+
+        private void LoadParametersAndRows()
+        {
+            Document doc = CadHost.ActiveDocument;
+            if (doc == null)
+            {
+                _status.Text = "没有活动图纸。";
+                return;
+            }
+
+            using (Transaction tr = doc.TransactionManager.StartTransaction())
+            {
+                BlockReference sample = null;
+                foreach (ObjectId id in _blockIds)
+                {
+                    sample = tr.GetObject(id, OpenMode.ForRead) as BlockReference;
+                    if (sample != null && sample.IsDynamicBlock) break;
+                    sample = null;
+                }
+
+                if (sample == null)
+                {
+                    tr.Commit();
+                    _status.Text = "当前选择的块不是动态块。请选择动态块后重新执行 EditBlockAtt。";
+                    _grid.Enabled = false;
+                    return;
+                }
+
+                foreach (DynamicBlockReferenceProperty prop in sample.DynamicBlockReferencePropertyCollection)
+                {
+                    if (prop == null || String.IsNullOrEmpty(prop.PropertyName)) continue;
+                    ParameterInfo info = new ParameterInfo();
+                    info.Name = prop.PropertyName;
+                    object value = prop.Value;
+                    info.TypeName = value == null ? "未知" : value.GetType().Name;
+                    info.Units = prop.UnitsType.ToString();
+                    info.ReadOnly = prop.ReadOnly;
+                    try { info.Allowed = prop.GetAllowedValues(); }
+                    catch { info.Allowed = null; }
+                    _parameters.Add(info);
+                }
+
+                foreach (ObjectId id in _blockIds)
+                {
+                    BlockReference br = tr.GetObject(id, OpenMode.ForRead) as BlockReference;
+                    if (br == null || !br.IsDynamicBlock) continue;
+                    string handle = br.Handle.ToString();
+                    _ids[handle] = id;
+                }
+                tr.Commit();
+            }
+
+            if (_parameters.Count == 0)
+            {
+                _status.Text = "没有读取到动态参数。";
+                _grid.Enabled = false;
+                return;
+            }
+
+            DataGridViewTextBoxColumn handleCol = new DataGridViewTextBoxColumn();
+            handleCol.Name = "Handle";
+            handleCol.HeaderText = "Handle";
+            handleCol.ReadOnly = true;
+            handleCol.Frozen = true;
+            handleCol.Width = 95;
+            _grid.Columns.Add(handleCol);
+
+            DataGridViewTextBoxColumn nameCol = new DataGridViewTextBoxColumn();
+            nameCol.Name = "BlockName";
+            nameCol.HeaderText = "BlockName";
+            nameCol.ReadOnly = true;
+            nameCol.Frozen = true;
+            nameCol.Width = 150;
+            _grid.Columns.Add(nameCol);
+
+            for (int i = 0; i < _parameters.Count; i++)
+            {
+                ParameterInfo info = _parameters[i];
+                DataGridViewTextBoxColumn col = new DataGridViewTextBoxColumn();
+                col.Name = "P" + i.ToString(CultureInfo.InvariantCulture);
+                col.HeaderText = info.Name;
+                col.Width = 135;
+                col.ReadOnly = info.ReadOnly;
+                col.SortMode = DataGridViewColumnSortMode.NotSortable;
+                string allowed = info.Allowed == null ? "" :
+                    String.Join(", ", info.Allowed.Select(delegate(object v)
+                    {
+                        return Convert.ToString(v, CultureInfo.InvariantCulture);
+                    }).ToArray());
+                col.ToolTipText = "类型：" + info.TypeName + "；单位：" + info.Units +
+                    "；只读：" + (info.ReadOnly ? "是" : "否") +
+                    (allowed.Length == 0 ? "" : "；允许值：" + allowed);
+                _grid.Columns.Add(col);
+                _columns[info.Name] = i + 2;
+            }
+
+            using (Transaction tr = doc.TransactionManager.StartTransaction())
+            {
+                foreach (KeyValuePair<string, ObjectId> item in _ids)
+                {
+                    BlockReference br = tr.GetObject(item.Value, OpenMode.ForRead) as BlockReference;
+                    if (br == null) continue;
+                    Dictionary<string, DynamicBlockReferenceProperty> props = ReadProperties(br);
+                    int rowIndex = _grid.Rows.Add();
+                    DataGridViewRow row = _grid.Rows[rowIndex];
+                    row.Cells[0].Value = item.Key;
+                    row.Cells[1].Value = _blockName;
+                    foreach (ParameterInfo info in _parameters)
+                    {
+                        DynamicBlockReferenceProperty prop;
+                        string value = "";
+                        if (props.TryGetValue(info.Name, out prop))
+                            value = FormatValue(prop.Value);
+                        row.Cells[_columns[info.Name]].Value = value;
+                        _original[MakeKey(item.Key, info.Name)] = value;
+                    }
+                }
+                tr.Commit();
+            }
+
+            _status.Text = "动态块：" + _blockName + "；动态块数量：" + _grid.Rows.Count +
+                "；参数列：" + _parameters.Count +
+                "。可直接编辑单元格，或导入 Excel 后确认写入。";
+            RefreshHighlights();
+        }
+
+        private static Dictionary<string, DynamicBlockReferenceProperty> ReadProperties(BlockReference br)
+        {
+            Dictionary<string, DynamicBlockReferenceProperty> result =
+                new Dictionary<string, DynamicBlockReferenceProperty>(StringComparer.OrdinalIgnoreCase);
+            foreach (DynamicBlockReferenceProperty prop in br.DynamicBlockReferencePropertyCollection)
+                if (prop != null && !String.IsNullOrEmpty(prop.PropertyName) &&
+                    !result.ContainsKey(prop.PropertyName))
+                    result.Add(prop.PropertyName, prop);
+            return result;
+        }
+
+        private static string FormatValue(object value)
+        {
+            if (value == null) return "";
+            if (value is double) return ((double)value).ToString("G", CultureInfo.InvariantCulture);
+            if (value is float) return ((float)value).ToString("G", CultureInfo.InvariantCulture);
+            return Convert.ToString(value, CultureInfo.InvariantCulture);
+        }
+
+        private static string MakeKey(string handle, string property)
+        {
+            return handle + "|" + property;
+        }
+
+        private void RefreshHighlights()
+        {
+            if (_grid == null) return;
+            foreach (DataGridViewRow row in _grid.Rows)
+            {
+                string handle = Convert.ToString(row.Cells[0].Value);
+                foreach (ParameterInfo info in _parameters)
+                {
+                    int col = _columns[info.Name];
+                    string key = MakeKey(handle, info.Name);
+                    string current = Convert.ToString(row.Cells[col].Value) ?? "";
+                    string original;
+                    bool changed = _original.TryGetValue(key, out original) &&
+                        !String.Equals(current, original, StringComparison.Ordinal);
+                    row.Cells[col].Style.BackColor = changed ? Color.LightYellow : Color.White;
+                }
+            }
+        }
+
+        private void ExportXlsx()
+        {
+            SaveFileDialog dlg = new SaveFileDialog();
+            dlg.Filter = "Excel 工作簿 (*.xlsx)|*.xlsx";
+            dlg.FileName = "动态块参数.xlsx";
+            if (dlg.ShowDialog() != DialogResult.OK) return;
+            try
+            {
+                List<string> headers = new List<string>();
+                headers.Add("Handle");
+                headers.Add("BlockName");
+                foreach (ParameterInfo info in _parameters) headers.Add(info.Name);
+                List<IList<string>> rows = new List<IList<string>>();
+                foreach (DataGridViewRow row in _grid.Rows)
+                {
+                    List<string> values = new List<string>();
+                    for (int c = 0; c < _grid.Columns.Count; c++)
+                        values.Add(Convert.ToString(row.Cells[c].Value) ?? "");
+                    rows.Add(values);
+                }
+                XlsxLite.Write(dlg.FileName, headers, rows);
+                MessageBox.Show("已导出 " + rows.Count + " 个动态块、" +
+                    _parameters.Count + " 个参数列。", "动态块参数导出");
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("导出失败：" + ex.Message, "动态块参数");
+            }
+        }
+
+        private void ImportXlsx()
+        {
+            OpenFileDialog dlg = new OpenFileDialog();
+            dlg.Filter = "Excel 工作簿 (*.xlsx)|*.xlsx";
+            if (dlg.ShowDialog() != DialogResult.OK) return;
+            try
+            {
+                List<List<string>> table = XlsxLite.Read(dlg.FileName);
+                if (table.Count < 2 || table[0].Count < 2 ||
+                    !String.Equals(table[0][0], "Handle", StringComparison.OrdinalIgnoreCase) ||
+                    !String.Equals(table[0][1], "BlockName", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("格式错误：前两列必须为 Handle、BlockName。");
+
+                Dictionary<string, int> sourceColumns =
+                    new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                for (int c = 2; c < table[0].Count; c++)
+                    if (!String.IsNullOrEmpty(table[0][c])) sourceColumns[table[0][c]] = c;
+
+                Dictionary<string, int> targetRows =
+                    new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                foreach (DataGridViewRow row in _grid.Rows)
+                    targetRows[Convert.ToString(row.Cells[0].Value)] = row.Index;
+
+                int updated = 0;
+                int invalid = 0;
+                for (int r = 1; r < table.Count; r++)
+                {
+                    List<string> line = table[r];
+                    if (line.Count < 2 || String.IsNullOrEmpty(line[0])) continue;
+                    int rowIndex;
+                    if (!targetRows.TryGetValue(line[0], out rowIndex) ||
+                        !String.Equals(line[1], _blockName, StringComparison.OrdinalIgnoreCase))
+                    { invalid++; continue; }
+
+                    foreach (ParameterInfo info in _parameters)
+                    {
+                        int sourceCol;
+                        if (!sourceColumns.TryGetValue(info.Name, out sourceCol) ||
+                            sourceCol >= line.Count || String.IsNullOrEmpty(line[sourceCol])) continue;
+                        if (info.ReadOnly) { invalid++; continue; }
+                        _grid.Rows[rowIndex].Cells[_columns[info.Name]].Value = line[sourceCol];
+                        updated++;
+                    }
+                }
+                RefreshHighlights();
+                _status.Text = "导入预览：填入/更新 " + updated + " 个单元格；无效块或只读参数 " +
+                    invalid + " 项。黄色单元格表示待修改，确认后写入 CAD。";
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("导入失败：" + ex.Message, "动态块参数");
+            }
+        }
+
+        private void ApplyChanges()
+        {
+            List<string> errors = new List<string>();
+            int requested = 0;
+            foreach (DataGridViewRow row in _grid.Rows)
+            {
+                string handle = Convert.ToString(row.Cells[0].Value);
+                foreach (ParameterInfo info in _parameters)
+                {
+                    string key = MakeKey(handle, info.Name);
+                    string oldValue;
+                    if (!_original.TryGetValue(key, out oldValue)) continue;
+                    string newValue = Convert.ToString(row.Cells[_columns[info.Name]].Value) ?? "";
+                    if (String.Equals(oldValue, newValue, StringComparison.Ordinal)) continue;
+                    if (info.ReadOnly)
+                    {
+                        errors.Add(handle + " / " + info.Name + "：只读参数");
+                        continue;
+                    }
+                    requested++;
+                }
+            }
+
+            if (requested == 0)
+            {
+                MessageBox.Show(errors.Count == 0 ? "没有待写入的修改。" :
+                    String.Join("\r\n", errors.ToArray()), "动态块参数");
+                return;
+            }
+            if (MessageBox.Show("确认写入 " + requested + " 个动态参数？\r\n只读或无效项将跳过。",
+                "确认写入", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+
+            Document doc = CadHost.ActiveDocument;
+            int changed = 0;
+            using (DocumentLock dl = doc.LockDocument())
+            using (Transaction tr = doc.TransactionManager.StartTransaction())
+            {
+                foreach (DataGridViewRow row in _grid.Rows)
+                {
+                    string handle = Convert.ToString(row.Cells[0].Value);
+                    ObjectId id;
+                    if (!_ids.TryGetValue(handle, out id)) continue;
+                    BlockReference br = tr.GetObject(id, OpenMode.ForWrite) as BlockReference;
+                    if (br == null || !br.IsDynamicBlock) continue;
+                    Dictionary<string, DynamicBlockReferenceProperty> props = ReadProperties(br);
+
+                    foreach (ParameterInfo info in _parameters)
+                    {
+                        string key = MakeKey(handle, info.Name);
+                        string oldValue;
+                        if (!_original.TryGetValue(key, out oldValue)) continue;
+                        string newText = Convert.ToString(row.Cells[_columns[info.Name]].Value) ?? "";
+                        if (String.Equals(oldValue, newText, StringComparison.Ordinal)) continue;
+
+                        DynamicBlockReferenceProperty prop;
+                        if (!props.TryGetValue(info.Name, out prop) || prop.ReadOnly)
+                        {
+                            errors.Add(handle + " / " + info.Name + "：参数不存在或只读");
+                            continue;
+                        }
+                        if (!String.Equals(FormatValue(prop.Value), oldValue, StringComparison.Ordinal))
+                        {
+                            errors.Add(handle + " / " + info.Name + "：CAD 中的原值已变化，跳过以避免覆盖");
+                            continue;
+                        }
+                        try
+                        {
+                            object converted = ConvertPropertyValue(newText, prop.Value, info);
+                            prop.Value = converted;
+                            changed++;
+                        }
+                        catch (Exception ex)
+                        {
+                            errors.Add(handle + " / " + info.Name + "：" + ex.Message);
+                        }
+                    }
+                }
+                tr.Commit();
+            }
+
+            using (Transaction tr = doc.TransactionManager.StartTransaction())
+            {
+                foreach (DataGridViewRow row in _grid.Rows)
+                {
+                    string handle = Convert.ToString(row.Cells[0].Value);
+                    ObjectId id;
+                    if (!_ids.TryGetValue(handle, out id)) continue;
+                    BlockReference br = tr.GetObject(id, OpenMode.ForRead) as BlockReference;
+                    if (br == null) continue;
+                    Dictionary<string, DynamicBlockReferenceProperty> props = ReadProperties(br);
+                    foreach (ParameterInfo info in _parameters)
+                    {
+                        DynamicBlockReferenceProperty prop;
+                        if (props.TryGetValue(info.Name, out prop))
+                        {
+                            string value = FormatValue(prop.Value);
+                            row.Cells[_columns[info.Name]].Value = value;
+                            _original[MakeKey(handle, info.Name)] = value;
+                        }
+                    }
+                }
+                tr.Commit();
+            }
+
+            RefreshHighlights();
+            _status.Text = "写入结束：成功修改 " + changed + " 项；异常/跳过 " + errors.Count + " 项。";
+            if (errors.Count > 0)
+                MessageBox.Show("成功修改：" + changed + " 项\r\n异常/跳过：" + errors.Count +
+                    " 项\r\n\r\n" + String.Join("\r\n", errors.Take(20).ToArray()),
+                    "动态块参数写入结果");
+            else
+                MessageBox.Show("成功修改 " + changed + " 个动态参数。", "动态块参数");
+        }
+
+        private static object ConvertPropertyValue(string text, object current, ParameterInfo info)
+        {
+            Type targetType = current == null ? typeof(string) : current.GetType();
+            if (info.Allowed != null && info.Allowed.Length > 0)
+            {
+                foreach (object allowed in info.Allowed)
+                    if (String.Equals(FormatValue(allowed), text, StringComparison.OrdinalIgnoreCase))
+                        return allowed;
+                throw new InvalidOperationException("输入值不在该参数允许值列表中。");
+            }
+            if (targetType == typeof(string)) return text;
+            if (targetType == typeof(bool)) return Boolean.Parse(text);
+            if (targetType.IsEnum) return Enum.Parse(targetType, text, true);
+            return Convert.ChangeType(text, targetType, CultureInfo.InvariantCulture);
+        }
+    }
+}
