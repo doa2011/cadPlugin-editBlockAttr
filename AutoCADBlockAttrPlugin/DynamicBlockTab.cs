@@ -227,6 +227,7 @@ namespace AutoCADBlockAttrPlugin
             handleCol.Name = "Handle";
             handleCol.HeaderText = "Handle";
             handleCol.ReadOnly = true;
+            handleCol.SortMode = DataGridViewColumnSortMode.NotSortable;
             handleCol.Frozen = true;
             handleCol.Width = 95;
             _grid.Columns.Add(handleCol);
@@ -235,6 +236,7 @@ namespace AutoCADBlockAttrPlugin
             nameCol.Name = "BlockName";
             nameCol.HeaderText = "块名";
             nameCol.ReadOnly = true;
+            nameCol.SortMode = DataGridViewColumnSortMode.NotSortable;
             nameCol.Frozen = true;
             nameCol.Width = 150;
             _grid.Columns.Add(nameCol);
