@@ -1,6 +1,9 @@
 name: Build and Release AutoCAD Plugin
 
 on:
+  pull_request:
+    branches:
+      - master
   workflow_dispatch:
     inputs:
       version:
@@ -70,16 +73,18 @@ jobs:
       - name: Build selected AutoCAD version(s)
         shell: pwsh
         run: |
-          python tools/build_all.py --year "${{ inputs.version }}"
+          $version = if ($env:GITHUB_EVENT_NAME -eq "workflow_dispatch") { "${{ inputs.version }}" } else { "all" }
+          python tools/build_all.py --year "$version"
           if ($LASTEXITCODE -ne 0) { throw "AutoCAD build or verification failed" }
 
           if (-not (Test-Path "dist_all/*.dll")) {
             throw "No DLL files were generated"
           }
 
-          Compress-Archive -Path "dist_all/*.dll" -DestinationPath "dist_all/AutoCADBlockAttrPlugin-${{ inputs.version }}.zip" -Force
+          Compress-Archive -Path "dist_all/*.dll" -DestinationPath "dist_all/AutoCADBlockAttrPlugin-$version.zip" -Force
 
       - name: Publish GitHub Release
+        if: github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: "v1.2.0-${{ inputs.version }}-${{ github.run_number }}"
