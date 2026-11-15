@@ -3,7 +3,7 @@
     多版本构建用参数化工程。不要直接在 VS 中打开本文件，
     请用 build_all.bat / tools\build_all.py 传入下列属性：
 
-      AcadNetFx   : net35 / net40 / net45 / net46 / net472 / net48
+      AcadNetFx   : net35 / net40 / net45 / net46 / net47 / net48
       AcadRefDir  : 该版本编译期引用目录（acmgd / acdbmgd / accoremgd）
       AcadOutDir  : 输出目录（须以反斜杠结尾）
       AcadSrcDir  : 源码目录（含 BlockAttrPlugin.cs 与 Properties\AssemblyInfo.cs）
