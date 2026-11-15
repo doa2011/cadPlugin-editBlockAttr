@@ -332,9 +332,24 @@ namespace AutoCADBlockAttrPlugin
                 Document doc = CadHost.ActiveDocument;
                 using (Transaction tr = doc.TransactionManager.StartTransaction())
                 {
+                    List<AngleSortItem> orderedBlocks = new List<AngleSortItem>();
                     foreach (ObjectId id in _blockIds)
                     {
                         BlockReference br = tr.GetObject(id, OpenMode.ForRead) as BlockReference;
+                        if (br != null)
+                            orderedBlocks.Add(new AngleSortItem {
+                                Id = id, X = br.Position.X, Y = br.Position.Y
+                            });
+                    }
+                    // XLSX 默认按从左至右排列：X 升序，同列按 Y 降序。
+                    orderedBlocks = orderedBlocks
+                        .OrderBy(b => b.X)
+                        .ThenByDescending(b => b.Y)
+                        .ToList();
+
+                    foreach (AngleSortItem item in orderedBlocks)
+                    {
+                        BlockReference br = tr.GetObject(item.Id, OpenMode.ForRead) as BlockReference;
                         if (br == null) continue;
                         Dictionary<string, AttributeReference> attrs = ReadAttributes(br, tr, OpenMode.ForRead);
                         List<string> values = new List<string>();
@@ -385,7 +400,12 @@ namespace AutoCADBlockAttrPlugin
 
                 Dictionary<string, int> columns = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
                 for (int c = 2; c < table[0].Count; c++)
-                    if (table[0][c].Length > 0) columns[table[0][c]] = c;
+                {
+                    string header = table[0][c];
+                    if (header.Length > 0 &&
+                        !string.Equals(header, "Origin", StringComparison.OrdinalIgnoreCase))
+                        columns[header] = c;
+                }
 
                 _xlsxChanges.Clear();
                 int invalid = 0;
