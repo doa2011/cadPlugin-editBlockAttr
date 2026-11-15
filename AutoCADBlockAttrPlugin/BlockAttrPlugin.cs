@@ -369,6 +369,7 @@ namespace AutoCADBlockAttrPlugin
         private Label lblCount;
         private Button btnApply;
         private Button btnCancel;
+        private Panel _escapeConfirmPanel;
 
         public AttrModForm(ObjectId[] blockIds, string blockName, ObjectId sampleId)
         {
@@ -376,6 +377,8 @@ namespace AutoCADBlockAttrPlugin
             _blockName = blockName;
             _sampleId = sampleId;
 
+            KeyPreview = true;
+            KeyDown += AttrModForm_KeyDown;
             InitializeComponent();
             LoadAttributes();
             InitializeExtendedTabs();
@@ -385,10 +388,11 @@ namespace AutoCADBlockAttrPlugin
         {
             Text = "块属性批量修改器";
             Size = new Size(760, 560);
-            FormBorderStyle = FormBorderStyle.FixedDialog;
+            FormBorderStyle = FormBorderStyle.Sizable;
             StartPosition = FormStartPosition.CenterParent;
-            MaximizeBox = false;
-            MinimizeBox = false;
+            MaximizeBox = true;
+            MinimizeBox = true;
+            MinimumSize = new Size(1000, 700);
 
             Label lblBlock = new Label()
             {
@@ -501,6 +505,48 @@ namespace AutoCADBlockAttrPlugin
             Controls.Add(gbAttrs);
             Controls.Add(btnApply);
             Controls.Add(btnCancel);
+
+            _escapeConfirmPanel = new Panel();
+            _escapeConfirmPanel.Size = new Size(360, 126);
+            _escapeConfirmPanel.BorderStyle = BorderStyle.FixedSingle;
+            _escapeConfirmPanel.BackColor = SystemColors.Control;
+            _escapeConfirmPanel.Visible = false;
+            _escapeConfirmPanel.Anchor = AnchorStyles.None;
+            Label escapeText = new Label();
+            escapeText.Text = "确定退出块属性批量修改器？\\r\\n再次按 ESC 退出，或选择继续使用。";
+            escapeText.Location = new Point(18, 16);
+            escapeText.Size = new Size(320, 48);
+            Button continueButton = new Button();
+            continueButton.Text = "继续使用";
+            continueButton.Location = new Point(92, 78);
+            continueButton.Size = new Size(82, 28);
+            continueButton.Click += delegate { _escapeConfirmPanel.Visible = false; };
+            Button exitButton = new Button();
+            exitButton.Text = "退出";
+            exitButton.Location = new Point(188, 78);
+            exitButton.Size = new Size(82, 28);
+            exitButton.Click += delegate { Close(); };
+            _escapeConfirmPanel.Controls.Add(escapeText);
+            _escapeConfirmPanel.Controls.Add(continueButton);
+            _escapeConfirmPanel.Controls.Add(exitButton);
+            Controls.Add(_escapeConfirmPanel);
+            _escapeConfirmPanel.BringToFront();
+        }
+
+        private void AttrModForm_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.KeyCode != Keys.Escape) return;
+            e.Handled = true;
+            e.SuppressKeyPress = true;
+            if (_escapeConfirmPanel.Visible)
+            {
+                Close();
+                return;
+            }
+            _escapeConfirmPanel.Left = (ClientSize.Width - _escapeConfirmPanel.Width) / 2;
+            _escapeConfirmPanel.Top = (ClientSize.Height - _escapeConfirmPanel.Height) / 2;
+            _escapeConfirmPanel.Visible = true;
+            _escapeConfirmPanel.BringToFront();
         }
 
         /// <summary>读取所选块的全部属性 TAG 与当前值，预填到「统一修改为」栏。</summary>
