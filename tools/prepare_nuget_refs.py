@@ -36,8 +36,13 @@ def main():
             data = f.read()
         patched, count = PATTERN.subn(b'.NETFramework,Version=v4.0', data)
         if count == 0:
-            print('未找到可降级的 .NETFramework TargetFrameworkAttribute:', src)
-            return 1
+            # accoremgd.dll may not embed TargetFrameworkAttribute; it is still
+            # a valid compile-time reference, so preserve its original bytes.
+            if name.lower() != 'accoremgd.dll':
+                print('未找到可降级的 .NETFramework TargetFrameworkAttribute:', src)
+                return 1
+            print('未发现目标框架标记，原样复制:', src)
+            patched = data
         dst = os.path.join(out_dir, name)
         with open(dst, 'wb') as f:
             f.write(patched)
