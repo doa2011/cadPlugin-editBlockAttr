@@ -1,6 +1,9 @@
 name: Build and Release AutoCAD Plugin
 
 on:
+  push:
+    branches:
+      - feature/dynamic-block-properties
   pull_request:
     branches:
       - master
