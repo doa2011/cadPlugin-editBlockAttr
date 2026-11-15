@@ -16,6 +16,7 @@ namespace AutoCADBlockAttrPlugin
         private ComboBox _anglePageTotal;
         private TextBox _angleTitleValue;
         private TextBox _angleDrawingNoValue;
+        private TextBox _anglePageTotalValue;
         private DataGridView _xlsxPreview;
         private readonly List<XlsxChange> _xlsxChanges = new List<XlsxChange>();
 
@@ -99,23 +100,33 @@ namespace AutoCADBlockAttrPlugin
             page.Controls.Add(numberLabel);
             page.Controls.Add(_angleDrawingNoValue);
 
+            Label totalLabel = new Label();
+            totalLabel.Text = "共几页（自动读取，可修改）";
+            totalLabel.Location = new System.Drawing.Point(25, 415);
+            totalLabel.Size = new System.Drawing.Size(180, 22);
+            _anglePageTotalValue = new TextBox();
+            _anglePageTotalValue.Location = new System.Drawing.Point(210, 412);
+            _anglePageTotalValue.Size = new System.Drawing.Size(120, 24);
+            page.Controls.Add(totalLabel);
+            page.Controls.Add(_anglePageTotalValue);
+
             Label fileInfo = new Label();
             fileInfo.Name = "AngleFileInfo";
-            fileInfo.Location = new System.Drawing.Point(20, 415);
+            fileInfo.Location = new System.Drawing.Point(20, 455);
             fileInfo.Size = new System.Drawing.Size(700, 55);
             UpdateAngleFileInfo(fileInfo);
             page.Controls.Add(fileInfo);
 
             Button apply = new Button();
             apply.Text = "自动填写角标";
-            apply.Location = new System.Drawing.Point(20, 485);
+            apply.Location = new System.Drawing.Point(20, 525);
             apply.Size = new System.Drawing.Size(130, 34);
             apply.Click += delegate { ApplyAngleValues(left.Checked); };
             page.Controls.Add(apply);
 
             Label note = new Label();
-            note.Text = "提示：四个字段分别映射到块的实际属性 TAG；映射不能为空且不能重复。总页数按本次选中的同名块数量统计。";
-            note.Location = new System.Drawing.Point(20, 535);
+            note.Text = "提示：四个字段分别映射到块的实际属性 TAG；映射不能为空且不能重复。“共几页”默认读取匹配块数量，也可手动修改后统一写入。";
+            note.Location = new System.Drawing.Point(20, 575);
             note.Size = new System.Drawing.Size(700, 55);
             page.Controls.Add(note);
 
@@ -144,8 +155,9 @@ namespace AutoCADBlockAttrPlugin
             string no;
             string title;
             SplitName(file, out no, out title);
-            label.Text = "当前 DWG：" + file + "\r\n文件名解析规则：图号 空格 图名；共几页自动统计匹配块数量：" + _blockIds.Length;
+            label.Text = "当前 DWG：" + file + "\r\n文件名解析规则：图号 空格 图名；总页数默认读取匹配角标块数量，可手动调整。";
             if (_angleDrawingNoValue != null) _angleDrawingNoValue.Text = no;
+            if (_anglePageTotalValue != null) _anglePageTotalValue.Text = _blockIds.Length.ToString();
             if (_angleTitleValue != null) _angleTitleValue.Text = title;
         }
 
@@ -207,6 +219,13 @@ namespace AutoCADBlockAttrPlugin
             SplitName(file, out drawingNo, out drawingTitle);
             if (_angleDrawingNoValue != null) drawingNo = _angleDrawingNoValue.Text;
             if (_angleTitleValue != null) drawingTitle = _angleTitleValue.Text;
+            int pageTotal;
+            if (_anglePageTotalValue == null ||
+                !int.TryParse(_anglePageTotalValue.Text, out pageTotal) || pageTotal < 1)
+            {
+                MessageBox.Show("“共几页”必须填写大于 0 的整数。", "角标设置");
+                return;
+            }
             Document doc = CadHost.ActiveDocument;
             int changed = 0;
             int missing = 0;
@@ -231,7 +250,7 @@ namespace AutoCADBlockAttrPlugin
                 {
                     BlockReference br = tr.GetObject(blocks[i].Id, OpenMode.ForRead) as BlockReference;
                     Dictionary<string, AttributeReference> attrs = ReadAttributes(br, tr, OpenMode.ForWrite);
-                    string[] values = { drawingTitle, drawingNo, (i + 1).ToString(), count.ToString() };
+                    string[] values = { drawingTitle, drawingNo, (i + 1).ToString(), pageTotal.ToString() };
                     for (int k = 0; k < tags.Length; k++)
                     {
                         AttributeReference ar;
