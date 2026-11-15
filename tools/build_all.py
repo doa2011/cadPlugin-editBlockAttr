@@ -155,6 +155,8 @@ def verify(made):
             ('帮助命令', b'EditBlockAttHelp' in data, ''),
             ('程序集版本 1.2', b'1.2.0.0' in data, ''),
             ('角标标签页', '角标修改'.encode('utf-16-le') in data, ''),
+            ('动态块参数标签页', '动态块参数'.encode('utf-16-le') in data, ''),
+            ('动态块参数表格类', b'DynamicBlockTab' in data, ''),
             ('XLSX导入导出', b'XlsxLite' in data, ''),
         ]
         bad = [n for n, good, _ in checks if not good]
