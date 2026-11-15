@@ -34,7 +34,9 @@ namespace AutoCADBlockAttrPlugin
         private readonly Dictionary<string, ObjectId> _ids =
             new Dictionary<string, ObjectId>(StringComparer.OrdinalIgnoreCase);
         private DataGridView _grid;
+        private DataGridView _attributeGrid;
         private Label _status;
+        private readonly List<string> _attributeTags = new List<string>();
         private RadioButton _sortLeftRight;
         private RadioButton _sortTopBottom;
         private readonly Dictionary<string, int> _columns =
@@ -107,7 +109,42 @@ namespace AutoCADBlockAttrPlugin
             _grid.EditMode = DataGridViewEditMode.EditOnKeystrokeOrF2;
             _grid.CellEndEdit += delegate { RefreshHighlights(); };
 
-            page.Controls.Add(_grid);
+            SplitContainer split = new SplitContainer();
+            split.Dock = DockStyle.Fill;
+            split.Orientation = Orientation.Horizontal;
+            split.SplitterDistance = 390;
+            split.Panel1MinSize = 160;
+            split.Panel2MinSize = 150;
+            split.Panel1.Controls.Add(_grid);
+
+            Panel attributeToolbar = new Panel();
+            attributeToolbar.Dock = DockStyle.Top;
+            attributeToolbar.Height = 38;
+            Label attributeTitle = new Label();
+            attributeTitle.Text = "块属性预览（只读）";
+            attributeTitle.SetBounds(10, 10, 180, 22);
+            Button exportAttributes = new Button();
+            exportAttributes.Text = "导出块属性 XLSX";
+            exportAttributes.SetBounds(190, 4, 140, 28);
+            exportAttributes.Click += delegate { ExportAttributesXlsx(); };
+            attributeToolbar.Controls.Add(attributeTitle);
+            attributeToolbar.Controls.Add(exportAttributes);
+
+            _attributeGrid = new DataGridView();
+            _attributeGrid.Dock = DockStyle.Fill;
+            _attributeGrid.ReadOnly = true;
+            _attributeGrid.AllowUserToAddRows = false;
+            _attributeGrid.AllowUserToDeleteRows = false;
+            _attributeGrid.AllowUserToOrderColumns = false;
+            _attributeGrid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.DisplayedCells;
+            _attributeGrid.RowHeadersVisible = false;
+            _attributeGrid.SelectionMode = DataGridViewSelectionMode.CellSelect;
+            _attributeGrid.MultiSelect = true;
+            _attributeGrid.ScrollBars = ScrollBars.Both;
+            split.Panel2.Controls.Add(_attributeGrid);
+            split.Panel2.Controls.Add(attributeToolbar);
+
+            page.Controls.Add(split);
             page.Controls.Add(toolbar);
 
             LoadParametersAndRows();
@@ -121,6 +158,7 @@ namespace AutoCADBlockAttrPlugin
                 if (_sortTopBottom.Checked) SortGridRows();
             };
             SortGridRows();
+            LoadAttributePreview();
         }
 
         private void LoadParametersAndRows()
@@ -153,9 +191,8 @@ namespace AutoCADBlockAttrPlugin
                 foreach (DynamicBlockReferenceProperty prop in sample.DynamicBlockReferencePropertyCollection)
                 {
                     if (prop == null || String.IsNullOrEmpty(prop.PropertyName)) continue;
-                    // Origin 是 AutoCAD 动态块内部辅助属性，不作为可编辑参数展示。
-                    if (String.Equals(prop.PropertyName, "Origin",
-                        StringComparison.OrdinalIgnoreCase)) continue;
+                    // 统一过滤 AutoCAD 动态块内部 Origin 辅助参数，兼容空格/下划线/连字符。
+                    if (IsOriginPropertyName(prop.PropertyName)) continue;
                     ParameterInfo info = new ParameterInfo();
                     info.Name = prop.PropertyName;
                     object value = prop.Value;
@@ -194,7 +231,7 @@ namespace AutoCADBlockAttrPlugin
 
             DataGridViewTextBoxColumn nameCol = new DataGridViewTextBoxColumn();
             nameCol.Name = "BlockName";
-            nameCol.HeaderText = "BlockName";
+            nameCol.HeaderText = "块名";
             nameCol.ReadOnly = true;
             nameCol.Frozen = true;
             nameCol.Width = 150;
@@ -311,6 +348,16 @@ namespace AutoCADBlockAttrPlugin
             foreach (KeyValuePair<Point3d, object[]> item in ordered)
                 _grid.Rows.Add(item.Value);
             RefreshHighlights();
+            LoadAttributePreview();
+        }
+
+        private static bool IsOriginPropertyName(string propertyName)
+        {
+            if (String.IsNullOrEmpty(propertyName)) return false;
+            string normalized = new string(propertyName.Trim()
+                .Where(delegate(char ch) { return !Char.IsWhiteSpace(ch) && ch != '_' && ch != '-'; })
+                .ToArray());
+            return String.Equals(normalized, "Origin", StringComparison.OrdinalIgnoreCase);
         }
 
         private static Dictionary<string, DynamicBlockReferenceProperty> ReadProperties(BlockReference br)
@@ -319,7 +366,7 @@ namespace AutoCADBlockAttrPlugin
                 new Dictionary<string, DynamicBlockReferenceProperty>(StringComparer.OrdinalIgnoreCase);
             foreach (DynamicBlockReferenceProperty prop in br.DynamicBlockReferencePropertyCollection)
                 if (prop != null && !String.IsNullOrEmpty(prop.PropertyName) &&
-                    !result.ContainsKey(prop.PropertyName))
+                    !IsOriginPropertyName(prop.PropertyName) && !result.ContainsKey(prop.PropertyName))
                     result.Add(prop.PropertyName, prop);
             return result;
         }
@@ -356,6 +403,112 @@ namespace AutoCADBlockAttrPlugin
             }
         }
 
+        private void LoadAttributePreview()
+        {
+            if (_attributeGrid == null) return;
+            Document doc = CadHost.ActiveDocument;
+            if (doc == null) return;
+
+            _attributeTags.Clear();
+            using (Transaction tr = doc.TransactionManager.StartTransaction())
+            {
+                foreach (ObjectId id in _blockIds)
+                {
+                    BlockReference br = tr.GetObject(id, OpenMode.ForRead) as BlockReference;
+                    if (br == null) continue;
+                    foreach (ObjectId attId in br.AttributeCollection)
+                    {
+                        AttributeReference ar = tr.GetObject(attId, OpenMode.ForRead) as AttributeReference;
+                        if (ar == null || String.IsNullOrEmpty(ar.Tag)) continue;
+                        if (!_attributeTags.Contains(ar.Tag, StringComparer.OrdinalIgnoreCase))
+                            _attributeTags.Add(ar.Tag);
+                    }
+                }
+                tr.Commit();
+            }
+
+            _attributeGrid.Columns.Clear();
+            _attributeGrid.Rows.Clear();
+            _attributeGrid.Columns.Add("Handle", "Handle");
+            _attributeGrid.Columns.Add("BlockName", "块名");
+            foreach (string tag in _attributeTags)
+            {
+                DataGridViewTextBoxColumn col = new DataGridViewTextBoxColumn();
+                col.Name = "A_" + _attributeGrid.Columns.Count.ToString(CultureInfo.InvariantCulture);
+                col.HeaderText = tag;
+                col.ReadOnly = true;
+                col.SortMode = DataGridViewColumnSortMode.NotSortable;
+                _attributeGrid.Columns.Add(col);
+            }
+
+            using (Transaction tr = doc.TransactionManager.StartTransaction())
+            {
+                // 以动态参数表当前的空间排序为准，确保上下两张表一一对应。
+                foreach (DataGridViewRow dynamicRow in _grid.Rows)
+                {
+                    string handle = Convert.ToString(dynamicRow.Cells[0].Value) ?? "";
+                    ObjectId id;
+                    if (!_ids.TryGetValue(handle, out id)) continue;
+                    BlockReference br = tr.GetObject(id, OpenMode.ForRead) as BlockReference;
+                    if (br == null) continue;
+
+                    Dictionary<string, string> values =
+                        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                    foreach (ObjectId attId in br.AttributeCollection)
+                    {
+                        AttributeReference ar = tr.GetObject(attId, OpenMode.ForRead) as AttributeReference;
+                        if (ar != null && !String.IsNullOrEmpty(ar.Tag) && !values.ContainsKey(ar.Tag))
+                            values.Add(ar.Tag, ar.TextString ?? "");
+                    }
+
+                    int rowIndex = _attributeGrid.Rows.Add();
+                    DataGridViewRow row = _attributeGrid.Rows[rowIndex];
+                    row.Cells[0].Value = handle;
+                    row.Cells[1].Value = _blockName;
+                    for (int i = 0; i < _attributeTags.Count; i++)
+                    {
+                        string value;
+                        row.Cells[i + 2].Value = values.TryGetValue(_attributeTags[i], out value) ? value : "";
+                    }
+                }
+                tr.Commit();
+            }
+        }
+
+        private void ExportAttributesXlsx()
+        {
+            if (_attributeGrid == null || _attributeGrid.Columns.Count < 2)
+            {
+                MessageBox.Show("没有可导出的块属性。", "块属性导出");
+                return;
+            }
+
+            SaveFileDialog dlg = new SaveFileDialog();
+            dlg.Filter = "Excel 工作簿 (*.xlsx)|*.xlsx";
+            dlg.FileName = "块属性预览.xlsx";
+            if (dlg.ShowDialog() != DialogResult.OK) return;
+            try
+            {
+                List<string> headers = new List<string>();
+                foreach (DataGridViewColumn col in _attributeGrid.Columns)
+                    headers.Add(col.HeaderText);
+                List<IList<string>> rows = new List<IList<string>>();
+                foreach (DataGridViewRow row in _attributeGrid.Rows)
+                {
+                    List<string> values = new List<string>();
+                    foreach (DataGridViewCell cell in row.Cells)
+                        values.Add(Convert.ToString(cell.Value) ?? "");
+                    rows.Add(values);
+                }
+                XlsxLite.Write(dlg.FileName, headers, rows);
+                MessageBox.Show("已导出 " + rows.Count + " 个块的属性预览。", "块属性导出");
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("块属性导出失败：" + ex.Message, "块属性导出");
+            }
+        }
+
         private void ExportXlsx()
         {
             SaveFileDialog dlg = new SaveFileDialog();
@@ -366,7 +519,7 @@ namespace AutoCADBlockAttrPlugin
             {
                 List<string> headers = new List<string>();
                 headers.Add("Handle");
-                headers.Add("BlockName");
+                headers.Add("块名");
                 foreach (ParameterInfo info in _parameters) headers.Add(info.Name);
                 List<IList<string>> rows = new List<IList<string>>();
                 foreach (DataGridViewRow row in _grid.Rows)
@@ -396,13 +549,15 @@ namespace AutoCADBlockAttrPlugin
                 List<List<string>> table = XlsxLite.Read(dlg.FileName);
                 if (table.Count < 2 || table[0].Count < 2 ||
                     !String.Equals(table[0][0], "Handle", StringComparison.OrdinalIgnoreCase) ||
-                    !String.Equals(table[0][1], "BlockName", StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidOperationException("格式错误：前两列必须为 Handle、BlockName。");
+                    !(String.Equals(table[0][1], "块名", StringComparison.OrdinalIgnoreCase) ||
+                      String.Equals(table[0][1], "BlockName", StringComparison.OrdinalIgnoreCase)))
+                    throw new InvalidOperationException("格式错误：前两列必须为 Handle、块名。");
 
                 Dictionary<string, int> sourceColumns =
                     new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
                 for (int c = 2; c < table[0].Count; c++)
-                    if (!String.IsNullOrEmpty(table[0][c])) sourceColumns[table[0][c]] = c;
+                    if (!String.IsNullOrEmpty(table[0][c]) && !IsOriginPropertyName(table[0][c]))
+                        sourceColumns[table[0][c]] = c;
 
                 Dictionary<string, int> targetRows =
                     new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
