@@ -33,7 +33,8 @@ namespace AutoCADBlockAttrPlugin
             List<Control> original = new List<Control>();
             foreach (Control control in Controls) original.Add(control);
 
-            Size = new System.Drawing.Size(800, 740);
+            Size = new System.Drawing.Size(1200, 800);
+            MinimumSize = new System.Drawing.Size(1000, 700);
             TabControl tabs = new TabControl();
             tabs.Dock = DockStyle.Fill;
             TabPage angle = new TabPage("角标修改");
