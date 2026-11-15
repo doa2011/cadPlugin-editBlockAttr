@@ -31,8 +31,11 @@ def main():
             data = f.read()
         patched, count = PATTERN.subn(b'.NETFramework,Version=v4.0', data)
         if count == 0:
-            print('未找到可降级的 .NETFramework TargetFrameworkAttribute:', src)
-            return 1
+            # Some Autodesk assemblies (notably accoremgd) do not carry this
+            # custom attribute. They are still valid compile-time references;
+            # preserve their original bytes instead of aborting the build.
+            print('未发现 .NETFramework TargetFrameworkAttribute，原样复制:', src)
+            patched = data
         dst = os.path.join(out_dir, name)
         with open(dst, 'wb') as f:
             f.write(patched)
