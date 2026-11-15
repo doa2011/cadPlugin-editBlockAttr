@@ -30,13 +30,14 @@ def main():
         with open(src, 'rb') as f:
             data = f.read()
         patched, count = PATTERN.subn(b'.NETFramework,Version=v4.0', data)
-        if count == 0:
-            print('未找到可降级的 .NETFramework TargetFrameworkAttribute:', src)
-            return 1
+        # accoremgd.dll in the official 24.3.0 package may not contain this
+        # attribute at all. In that case keep the assembly unchanged; it is
+        # still a valid metadata reference for the compiler.
         dst = os.path.join(out_dir, name)
         with open(dst, 'wb') as f:
             f.write(patched)
-        print('%s -> %s (替换 %d 处)' % (src, dst, count))
+        print('%s -> %s (替换 %d 处%s)' % (
+            src, dst, count, '' if count else '，原样复制'))
     return 0
 
 
