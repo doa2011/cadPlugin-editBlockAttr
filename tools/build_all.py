@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-按 AutoCAD 2010~2024 逐个版本编译并交付带年份后缀的 DLL。
+按 6 种 .NET 目标框架编译基准程序集，再输出 AutoCAD 2010~2024 各平台专用 DLL。
 
 原理
 ----
@@ -102,7 +102,7 @@ def build_bases(selected_versions):
 
 
 def produce(bases, selected_versions):
-    step('3/4  定向程序集版本号并输出 15 个带年份的 DLL')
+    step('3/4  定向程序集版本号并输出平台专用 DLL')
     # 不删除整个目录：旧 DLL 可能正被运行中的 AutoCAD 锁定，
     # 目录删除在某些环境下还会被安全策略拦截。直接逐个覆盖写即可。
     if not os.path.isdir(DIST):
@@ -110,12 +110,12 @@ def produce(bases, selected_versions):
     made = []
     locked = []
     for year, ver, fx, plus in selected_versions:
-        dst = os.path.join(DIST, 'AutoCADBlockAttrPlugin_%d.dll' % year)
+        dst = os.path.join(DIST, 'AutoCADBlockAttrPlugin_AutoCAD%d_%s.dll' % (year, fx.upper()))
         try:
             refs = retarget(bases[(fx, plus)], dst, ver)
         except (IOError, OSError):
             # 文件被 acad.exe 占用时改用备用名，保证本轮产物始终可用。
-            dst = os.path.join(DIST, 'AutoCADBlockAttrPlugin_%d_new.dll' % year)
+            dst = os.path.join(DIST, 'AutoCADBlockAttrPlugin_AutoCAD%d_%s_new.dll' % (year, fx.upper()))
             refs = retarget(bases[(fx, plus)], dst, ver)
             locked.append(year)
         print('  %d  %-6s -> %-42s %d.%d.%d.%d  [%s]' % (
@@ -196,7 +196,7 @@ def main():
     made = produce(bases, selected)
     good = verify(made)
     print('\n交付目录:', DIST)
-    print('共 %d 个 DLL' % len(made))
+    print('共 %d 个 AutoCAD 平台专用 DLL' % len(made))
     return 0 if good else 1
 
 
