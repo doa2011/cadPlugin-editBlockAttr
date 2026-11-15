@@ -22,6 +22,7 @@ import os
 import sys
 import shutil
 import subprocess
+import argparse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from acad_meta import parse, assembly_refs, retarget  # noqa: E402
@@ -66,10 +67,10 @@ def make_refs():
         raise RuntimeError('生成编译期引用副本失败')
 
 
-def build_bases():
+def build_bases(selected_versions):
     step('2/4  按目标框架编译基准程序集（6 次）')
     frameworks = []
-    for year, ver, fx, plus in VERSIONS:
+    for year, ver, fx, plus in selected_versions:
         if (fx, plus) not in frameworks:
             frameworks.append((fx, plus))
 
@@ -100,7 +101,7 @@ def build_bases():
     return bases
 
 
-def produce(bases):
+def produce(bases, selected_versions):
     step('3/4  定向程序集版本号并输出 15 个带年份的 DLL')
     # 不删除整个目录：旧 DLL 可能正被运行中的 AutoCAD 锁定，
     # 目录删除在某些环境下还会被安全策略拦截。直接逐个覆盖写即可。
@@ -108,7 +109,7 @@ def produce(bases):
         os.makedirs(DIST)
     made = []
     locked = []
-    for year, ver, fx, plus in VERSIONS:
+    for year, ver, fx, plus in selected_versions:
         dst = os.path.join(DIST, 'AutoCADBlockAttrPlugin_%d.dll' % year)
         try:
             refs = retarget(bases[(fx, plus)], dst, ver)
@@ -166,9 +167,33 @@ def verify(made):
 
 
 def main():
-    make_refs()
-    bases = build_bases()
-    made = produce(bases)
+    parser = argparse.ArgumentParser(description='编译指定 AutoCAD 版本或全部版本')
+    parser.add_argument('--year', default='all',
+                        help='AutoCAD 年份：2010~2024，或 all')
+    args = parser.parse_args()
+
+    if args.year.lower() == 'all':
+        selected = VERSIONS
+    else:
+        try:
+            year = int(args.year)
+        except ValueError:
+            parser.error('--year 必须是 all 或 2010~2024 的年份')
+        selected = [v for v in VERSIONS if v[0] == year]
+        if not selected:
+            parser.error('不支持的 AutoCAD 年份: %s' % args.year)
+
+    # GitHub Actions 会从 Autodesk 官方 NuGet 包准备 CLR4 编译引用；
+    # 本地开发环境则仍通过 make_acad_refs.py 从 AutoCAD 2024 安装目录生成。
+    needs_clr4 = any(v[3] for v in selected)
+    ref_files = [os.path.join(REF_CLR4, n)
+                 for n in ('acmgd.dll', 'acdbmgd.dll', 'accoremgd.dll')]
+    if needs_clr4 and not all(os.path.isfile(p) for p in ref_files):
+        make_refs()
+
+    step('构建目标: %s' % (', '.join(str(v[0]) for v in selected)))
+    bases = build_bases(selected)
+    made = produce(bases, selected)
     good = verify(made)
     print('\n交付目录:', DIST)
     print('共 %d 个 DLL' % len(made))
