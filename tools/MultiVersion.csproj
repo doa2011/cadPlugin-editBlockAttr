@@ -32,8 +32,11 @@
 
   <ItemGroup>
     <Compile Include="$(AcadSrcDir)\BlockAttrPlugin.cs" />
+    <Compile Include="$(AcadSrcDir)\AttrModForm.Extensions.cs" />
+    <Compile Include="$(AcadSrcDir)\XlsxLite.cs" />
     <Compile Include="$(AcadSrcDir)\Properties\AssemblyInfo.cs" />
     <Reference Include="System.Drawing" />
+    <Reference Include="WindowsBase" />
     <Reference Include="System.Windows.Forms" />
     <Reference Include="AcMgd">
       <HintPath>$(AcadRefDir)\acmgd.dll</HintPath>
@@ -50,7 +53,7 @@
     </Reference>
   </ItemGroup>
 
-  <ItemGroup Condition="'$(AcadNetFx)' == 'net35'">
-    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net35" Version="1.0.3" PrivateAssets="All" />
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="All" />
   </ItemGroup>
 </Project>

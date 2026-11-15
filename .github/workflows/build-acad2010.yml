@@ -1,0 +1,94 @@
+name: Build and Release AutoCAD Plugin
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "选择要编译的 AutoCAD 版本"
+        required: true
+        type: choice
+        default: all
+        options:
+          - all
+          - "2010"
+          - "2011"
+          - "2012"
+          - "2013"
+          - "2014"
+          - "2015"
+          - "2016"
+          - "2017"
+          - "2018"
+          - "2019"
+          - "2020"
+          - "2021"
+          - "2022"
+          - "2023"
+          - "2024"
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Restore Autodesk AutoCAD 2024 API reference package
+        shell: pwsh
+        run: |
+          $refDir = Join-Path $env:RUNNER_TEMP "acad-nuget-ref"
+          New-Item -ItemType Directory -Force -Path $refDir | Out-Null
+          @'
+          <Project Sdk="Microsoft.NET.Sdk">
+            <PropertyGroup>
+              <TargetFramework>net48</TargetFramework>
+            </PropertyGroup>
+            <ItemGroup>
+              <PackageReference Include="AutoCAD.NET" Version="24.3.0" />
+            </ItemGroup>
+          </Project>
+          '@ | Set-Content -Encoding UTF8 (Join-Path $refDir "Ref.csproj")
+          dotnet restore (Join-Path $refDir "Ref.csproj")
+          if ($LASTEXITCODE -ne 0) { throw "Restore Autodesk AutoCAD.NET 24.3.0 failed" }
+
+          python tools/prepare_nuget_refs.py "$env:USERPROFILE\.nuget\packages" "build/refs/clr4"
+          if ($LASTEXITCODE -ne 0) { throw "Preparing AutoCAD API reference assemblies failed" }
+
+      - name: Build selected AutoCAD version(s)
+        shell: pwsh
+        run: |
+          python tools/build_all.py --year "${{ inputs.version }}"
+          if ($LASTEXITCODE -ne 0) { throw "AutoCAD build or verification failed" }
+
+          if (-not (Test-Path "dist_all/*.dll")) {
+            throw "No DLL files were generated"
+          }
+
+          Compress-Archive -Path "dist_all/*.dll" -DestinationPath "dist_all/AutoCADBlockAttrPlugin-${{ inputs.version }}.zip" -Force
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "v1.2.0-${{ inputs.version }}-${{ github.run_number }}"
+          name: "AutoCADBlockAttrPlugin 1.2.0 - AutoCAD ${{ inputs.version }}"
+          target_commitish: "${{ github.sha }}"
+          generate_release_notes: true
+          files: |
+            dist_all/*.dll
+            dist_all/*.zip
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

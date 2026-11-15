@@ -30,6 +30,7 @@
   <ItemGroup>
     <!-- SDK 对 .NET Framework 目标已默认引用 System / System.Core / System.Data / System.Xml -->
     <Reference Include="System.Drawing" />
+    <Reference Include="WindowsBase" />
     <Reference Include="System.Windows.Forms" />
     <Reference Include="AcMgd">
       <HintPath>..\lib\AcMgd.dll</HintPath>
