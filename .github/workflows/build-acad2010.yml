@@ -89,7 +89,7 @@ jobs:
           Compress-Archive -Path "dist_all/*.dll" -DestinationPath "dist_all/AutoCADBlockAttrPlugin-$version.zip" -Force
 
       - name: Upload pull request build artifacts
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' || github.event_name == 'push'
         uses: actions/upload-artifact@v4
         with:
           name: AutoCADBlockAttrPlugin-PR-${{ github.event.pull_request.number }}
