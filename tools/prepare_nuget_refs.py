@@ -9,6 +9,11 @@ PATTERN = re.compile(br'\.NETFramework,Version=v4\.[0-9]')
 
 
 def main():
+    # GitHub Windows runners may default to cp1252; force UTF-8 for Chinese paths/logs.
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    if hasattr(sys.stderr, 'reconfigure'):
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
     if len(sys.argv) != 3:
         print('用法: prepare_nuget_refs.py <NuGet全局包目录> <输出目录>')
         return 2
