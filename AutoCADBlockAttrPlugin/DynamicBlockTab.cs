@@ -356,8 +356,8 @@ namespace AutoCADBlockAttrPlugin
         private static bool IsOriginPropertyName(string propertyName)
         {
             if (String.IsNullOrEmpty(propertyName)) return false;
-            string normalized = new string(propertyName.Trim()
-                .Where(delegate(char ch) { return !Char.IsWhiteSpace(ch) && ch != '_' && ch != '-'; })
+            string normalized = new string(propertyName
+                .Where(delegate(char ch) { return Char.IsLetterOrDigit(ch); })
                 .ToArray());
             return String.Equals(normalized, "Origin", StringComparison.OrdinalIgnoreCase);
         }
