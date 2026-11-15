@@ -226,11 +226,21 @@ namespace AutoCADBlockAttrPlugin
             DataGridViewTextBoxColumn handleCol = new DataGridViewTextBoxColumn();
             handleCol.Name = "Handle";
             handleCol.HeaderText = "Handle";
+            handleCol.Visible = false;
             handleCol.ReadOnly = true;
             handleCol.SortMode = DataGridViewColumnSortMode.NotSortable;
             handleCol.Frozen = true;
             handleCol.Width = 95;
             _grid.Columns.Add(handleCol);
+
+            DataGridViewTextBoxColumn seqCol = new DataGridViewTextBoxColumn();
+            seqCol.Name = "Sequence";
+            seqCol.HeaderText = "序号";
+            seqCol.ReadOnly = true;
+            seqCol.SortMode = DataGridViewColumnSortMode.NotSortable;
+            seqCol.Frozen = true;
+            seqCol.Width = 55;
+            _grid.Columns.Add(seqCol);
 
             DataGridViewTextBoxColumn nameCol = new DataGridViewTextBoxColumn();
             nameCol.Name = "BlockName";
@@ -238,7 +248,7 @@ namespace AutoCADBlockAttrPlugin
             nameCol.ReadOnly = true;
             nameCol.SortMode = DataGridViewColumnSortMode.NotSortable;
             nameCol.Frozen = true;
-            nameCol.Width = 150;
+            nameCol.Width = 130;
             _grid.Columns.Add(nameCol);
 
             for (int i = 0; i < _parameters.Count; i++)
@@ -247,7 +257,9 @@ namespace AutoCADBlockAttrPlugin
                 DataGridViewTextBoxColumn col = new DataGridViewTextBoxColumn();
                 col.Name = "P" + i.ToString(CultureInfo.InvariantCulture);
                 col.HeaderText = info.Name;
-                col.Width = 135;
+                col.Width = 85;
+                col.MinimumWidth = 55;
+                col.AutoSizeMode = DataGridViewAutoSizeColumnMode.None;
                 col.ReadOnly = info.ReadOnly;
                 col.SortMode = DataGridViewColumnSortMode.NotSortable;
                 string allowed = info.Allowed == null ? "" :
@@ -259,7 +271,10 @@ namespace AutoCADBlockAttrPlugin
                     "；只读：" + (info.ReadOnly ? "是" : "否") +
                     (allowed.Length == 0 ? "" : "；允许值：" + allowed);
                 _grid.Columns.Add(col);
-                _columns[info.Name] = i + 2;
+                col.ToolTipText = info.Name + "；类型：" + info.TypeName + "；单位：" + info.Units +
+                    "；只读：" + (info.ReadOnly ? "是" : "否") +
+                    (allowed.Length == 0 ? "" : "；允许值：" + allowed);
+                _columns[info.Name] = i + 3;
             }
 
             using (Transaction tr = doc.TransactionManager.StartTransaction())
@@ -272,7 +287,8 @@ namespace AutoCADBlockAttrPlugin
                     int rowIndex = _grid.Rows.Add();
                     DataGridViewRow row = _grid.Rows[rowIndex];
                     row.Cells[0].Value = item.Key;
-                    row.Cells[1].Value = _blockName;
+                    row.Cells[1].Value = _grid.Rows.Count;
+                    row.Cells[2].Value = _blockName;
                     foreach (ParameterInfo info in _parameters)
                     {
                         DynamicBlockReferenceProperty prop;
@@ -290,6 +306,7 @@ namespace AutoCADBlockAttrPlugin
                 "；参数列：" + _parameters.Count +
                 "。可直接编辑单元格，或导入 Excel 后确认写入。";
             RefreshHighlights();
+            AutoFitParameterColumns();
         }
 
         /// <summary>
@@ -349,10 +366,30 @@ namespace AutoCADBlockAttrPlugin
             }
 
             _grid.Rows.Clear();
+            int sequence = 1;
             foreach (KeyValuePair<Point3d, object[]> item in ordered)
-                _grid.Rows.Add(item.Value);
+            {
+                int index = _grid.Rows.Add(item.Value);
+                _grid.Rows[index].Cells[1].Value = sequence++;
+            }
             RefreshHighlights();
             LoadAttributePreview();
+        }
+
+        private void AutoFitParameterColumns()
+        {
+            if (_grid == null) return;
+            for (int i = 3; i < _grid.Columns.Count; i++)
+            {
+                DataGridViewColumn col = _grid.Columns[i];
+                int width = TextRenderer.MeasureText(col.HeaderText, _grid.Font).Width + 28;
+                foreach (DataGridViewRow row in _grid.Rows)
+                {
+                    string value = Convert.ToString(row.Cells[i].Value) ?? "";
+                    width = Math.Max(width, TextRenderer.MeasureText(value, _grid.Font).Width + 24);
+                }
+                col.Width = Math.Max(55, Math.Min(145, width));
+            }
         }
 
         private static bool IsOriginPropertyName(string propertyName)
@@ -378,8 +415,8 @@ namespace AutoCADBlockAttrPlugin
         private static string FormatValue(object value)
         {
             if (value == null) return "";
-            if (value is double) return ((double)value).ToString("G", CultureInfo.InvariantCulture);
-            if (value is float) return ((float)value).ToString("G", CultureInfo.InvariantCulture);
+            if (value is double) return ((double)value).ToString("G3", CultureInfo.InvariantCulture);
+            if (value is float) return ((float)value).ToString("G3", CultureInfo.InvariantCulture);
             return Convert.ToString(value, CultureInfo.InvariantCulture);
         }
 
@@ -433,7 +470,12 @@ namespace AutoCADBlockAttrPlugin
 
             _attributeGrid.Columns.Clear();
             _attributeGrid.Rows.Clear();
-            _attributeGrid.Columns.Add("Handle", "Handle");
+            DataGridViewColumn attrHandle = new DataGridViewTextBoxColumn();
+            attrHandle.Name = "Handle";
+            attrHandle.HeaderText = "Handle";
+            attrHandle.Visible = false;
+            _attributeGrid.Columns.Add(attrHandle);
+            _attributeGrid.Columns.Add("Sequence", "序号");
             _attributeGrid.Columns.Add("BlockName", "块名");
             foreach (string tag in _attributeTags)
             {
@@ -468,11 +510,12 @@ namespace AutoCADBlockAttrPlugin
                     int rowIndex = _attributeGrid.Rows.Add();
                     DataGridViewRow row = _attributeGrid.Rows[rowIndex];
                     row.Cells[0].Value = handle;
-                    row.Cells[1].Value = _blockName;
+                    row.Cells[1].Value = dynamicRow.Cells[1].Value;
+                    row.Cells[2].Value = _blockName;
                     for (int i = 0; i < _attributeTags.Count; i++)
                     {
                         string value;
-                        row.Cells[i + 2].Value = values.TryGetValue(_attributeTags[i], out value) ? value : "";
+                        row.Cells[i + 3].Value = values.TryGetValue(_attributeTags[i], out value) ? value : "";
                     }
                 }
                 tr.Commit();
@@ -529,7 +572,9 @@ namespace AutoCADBlockAttrPlugin
                 foreach (DataGridViewRow row in _grid.Rows)
                 {
                     List<string> values = new List<string>();
-                    for (int c = 0; c < _grid.Columns.Count; c++)
+                    values.Add(Convert.ToString(row.Cells[0].Value) ?? "");
+                    values.Add(Convert.ToString(row.Cells[2].Value) ?? "");
+                    for (int c = 3; c < _grid.Columns.Count; c++)
                         values.Add(Convert.ToString(row.Cells[c].Value) ?? "");
                     rows.Add(values);
                 }
@@ -704,6 +749,7 @@ namespace AutoCADBlockAttrPlugin
             }
 
             RefreshHighlights();
+            AutoFitParameterColumns();
             _status.Text = "写入结束：成功修改 " + changed + " 项；异常/跳过 " + errors.Count + " 项。";
             if (errors.Count > 0)
                 MessageBox.Show("成功修改：" + changed + " 项\r\n异常/跳过：" + errors.Count +
