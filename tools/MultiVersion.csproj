@@ -33,6 +33,7 @@
   <ItemGroup>
     <Compile Include="$(AcadSrcDir)\BlockAttrPlugin.cs" />
     <Compile Include="$(AcadSrcDir)\AttrModForm.Extensions.cs" />
+    <Compile Include="$(AcadSrcDir)\DynamicBlockTab.cs" />
     <Compile Include="$(AcadSrcDir)\XlsxLite.cs" />
     <Compile Include="$(AcadSrcDir)\Properties\AssemblyInfo.cs" />
     <Reference Include="System.Drawing" />
