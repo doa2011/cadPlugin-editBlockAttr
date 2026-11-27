@@ -19,6 +19,7 @@ namespace AutoCADBlockAttrPlugin
             public List<Options> Rules = new List<Options>();
             public int Start = 1;
             public int Total = 0;
+            public string SaveVersion = "原版本";
             public string TitleTag = "";
             public string DrawingTag = "";
             public string PageTag = "";
@@ -182,9 +183,16 @@ namespace AutoCADBlockAttrPlugin
 
         public static Result Write(string file, string output, Options options)
         {
-            if (String.Equals(Path.GetFullPath(file), Path.GetFullPath(output), StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException("输出文件不得覆盖输入 DWG。");
-            return Process(file, output, options);
+            if (!String.Equals(Path.GetFullPath(file), Path.GetFullPath(output), StringComparison.OrdinalIgnoreCase))
+                return Process(file, output, options);
+            string temp = Path.Combine(Path.GetDirectoryName(file), Guid.NewGuid().ToString("N") + ".dwg");
+            Result result = Process(file, temp, options);
+            result.Output = file;
+            try {
+                if (result.Status == "成功") File.Replace(temp, file, null);
+            } catch (System.Exception ex) { result.Status = "失败"; result.Error = ex.Message; result.Changed = 0; }
+            finally { try { if (File.Exists(temp)) File.Delete(temp); } catch (System.Exception) {} }
+            return result;
         }
 
         private static Result Process(string file, string output, Options options)
@@ -268,7 +276,9 @@ namespace AutoCADBlockAttrPlugin
                         if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
                         if (File.Exists(output))
                             throw new IOException("输出文件已存在，避免覆盖：" + output);
-                        db.SaveAs(output, DwgVersion.Current);
+                        DwgVersion version = options.SaveVersion == "原版本" ? db.OriginalFileVersion :
+                            (DwgVersion)Enum.Parse(typeof(DwgVersion), options.SaveVersion);
+                        db.SaveAs(output, version);
                         result.Status = "成功";
                     }
                     else result.Status = "可处理";
@@ -322,6 +332,7 @@ namespace AutoCADBlockAttrPlugin
         private readonly RadioButton left = new RadioButton();
         private readonly RadioButton top = new RadioButton();
         private readonly TextBox output = new TextBox();
+        private readonly ComboBox saveVersion = new ComboBox();
         private readonly Label status = new Label();
         private readonly List<string> files = new List<string>();
         private readonly CheckBox partial = new CheckBox();
@@ -361,7 +372,14 @@ namespace AutoCADBlockAttrPlugin
             settings.Controls.Add(left); settings.Controls.Add(top); settings.Controls.Add(partial);
             Button folder = new Button { Text = "输出文件夹", Width = 100 };
             folder.Click += PickOutput; settings.Controls.Add(folder);
-            output.Width = 260; settings.Controls.Add(output);
+            output.Width = 180; settings.Controls.Add(output);
+            saveVersion.DropDownStyle = ComboBoxStyle.DropDownList; saveVersion.Width = 100;
+            saveVersion.Items.Add("原版本");
+            foreach (string version in new string[] {"AC1015","AC1018","AC1021","AC1024","AC1027","AC1032"})
+                if (Enum.IsDefined(typeof(DwgVersion),version) && Convert.ToInt32(Enum.Parse(typeof(DwgVersion),version)) <= (int)DwgVersion.Current) saveVersion.Items.Add(version);
+            saveVersion.SelectedIndex = 0;
+            settings.Controls.Add(new Label { Text = "保存版本", AutoSize = true }); settings.Controls.Add(saveVersion);
+            Button clearOutput = new Button { Text = "清空输出", Width = 80 }; clearOutput.Click += delegate { output.Clear(); }; settings.Controls.Add(clearOutput);
             rules.Dock = DockStyle.Fill; rules.AllowUserToAddRows = false;
             rules.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
             rules.Columns.Add(new DataGridViewCheckBoxColumn { Name = "Enabled", HeaderText = "启用" });
@@ -392,7 +410,7 @@ namespace AutoCADBlockAttrPlugin
             foreach (DataGridViewColumn column in grid.Columns) column.SortMode = DataGridViewColumnSortMode.NotSortable;
             layout.Controls.Add(grid, 0, 2);
             status.Dock = DockStyle.Fill; status.TextAlign = ContentAlignment.MiddleLeft;
-            status.Text = "先选择 DWG，指定块名与四个实际 TAG，读取预览后再确认写入。输出为新文件，原图保持不变。";
+            status.Text = "先选择 DWG，指定块名与四个实际 TAG，读取预览后再确认写入。输出目录为空时覆盖原图，执行前确认。";
             layout.Controls.Add(status, 0, 3);
         }
 
@@ -487,6 +505,7 @@ namespace AutoCADBlockAttrPlugin
                 rule.TotalTag = Convert.ToString(row.Cells[6].Value).Trim();
                 options.Rules.Add(rule);
             }
+            options.SaveVersion = Convert.ToString(saveVersion.SelectedItem);
             options.LeftToRight = left.Checked;
             options.AllowPartial = partial.Checked;
             return options;
@@ -497,7 +516,7 @@ namespace AutoCADBlockAttrPlugin
             BatchTitleBlockProcessor.Options options = ReadOptions();
             return String.Join("|", files.Select(f=>f+":"+File.GetLastWriteTimeUtc(f).Ticks).ToArray()) + "|" +
                 String.Join("|", options.Rules.Select(r=>r.BlockName+":"+r.TitleTag+":"+r.DrawingTag+":"+r.PageTag+":"+r.TotalTag).ToArray()) +
-                options.LeftToRight.ToString()+options.AllowPartial.ToString();
+                options.LeftToRight.ToString()+options.AllowPartial.ToString()+options.SaveVersion;
         }
 
         private void PreviewFiles(object sender, EventArgs e)
@@ -525,17 +544,18 @@ namespace AutoCADBlockAttrPlugin
                 MessageBox.Show("文件、角标块名、TAG 或排序设置发生变化；请先读取最新预览再确认写入。");
                 return;
             }
-            if (String.IsNullOrEmpty(output.Text)) { MessageBox.Show("请选择独立输出文件夹。"); return; }
-            string dir = Path.GetFullPath(output.Text);
-            if (MessageBox.Show("即将处理 " + files.Count + " 个 DWG，保存为新文件到：\r\n" +
-                dir + "\r\n原 DWG 不会覆盖。确认？", "批量写入", MessageBoxButtons.YesNo,
-                MessageBoxIcon.Warning) != DialogResult.Yes) return;
+            bool overwrite = String.IsNullOrEmpty(output.Text.Trim());
+            string dir = overwrite ? "" : Path.GetFullPath(output.Text.Trim());
+            if (overwrite && MessageBox.Show("输出文件夹为空，将覆盖原始 DWG。确认继续？", "覆盖保存警告",
+                MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
+            if (!overwrite && files.Any(f => String.Equals(Path.GetFullPath(f),Path.Combine(dir,Path.GetFileName(f)),StringComparison.OrdinalIgnoreCase)))
+            { MessageBox.Show("输出目录包含原始文件，请选择其他目录或清空输出目录后确认覆盖。"); return; }
             BatchTitleBlockProcessor.Options options = ReadOptions();
             grid.Rows.Clear();
             int ok = 0;
             foreach (string file in files)
             {
-                string dest = Path.Combine(dir, Path.GetFileName(file));
+                string dest = overwrite ? file : Path.Combine(dir, Path.GetFileName(file));
                 BatchTitleBlockProcessor.Result r = BatchTitleBlockProcessor.Write(file, dest, options);
                 grid.Rows.Add(Path.GetFileName(file), r.DrawingNo, r.Title, r.Count,
                     r.Changed, r.Missing, r.Status, r.Error);
@@ -543,6 +563,12 @@ namespace AutoCADBlockAttrPlugin
                 grid.Refresh();
             }
             status.Text = "批量处理完成：" + ok + "/" + files.Count + " 个文件成功；其余见错误列。";
+            if (ok > 0 && MessageBox.Show(status.Text + "\r\n是否打开保存文件夹？", "处理完成", MessageBoxButtons.YesNo) == DialogResult.Yes)
+            {
+                try { foreach (string folder in (overwrite ? files.Select(f=>Path.GetDirectoryName(f)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray() : new string[] {dir})) System.Diagnostics.Process.Start("explorer.exe", "\"" + folder + "\""); }
+                catch (System.Exception ex) { MessageBox.Show(ex.Message); }
+            }
+            else if (ok == 0) MessageBox.Show(status.Text);
         }
     }
 }
