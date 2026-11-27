@@ -310,6 +310,8 @@ namespace AutoCADBlockAttrPlugin
         private readonly Label status = new Label();
         private readonly List<string> files = new List<string>();
         private readonly CheckBox partial = new CheckBox();
+        private string previewSignature = "";
+
 
         public BatchTitleBlockForm()
         {
@@ -386,7 +388,8 @@ namespace AutoCADBlockAttrPlugin
                     if (!files.Contains(file, StringComparer.OrdinalIgnoreCase)) files.Add(file);
                 grid.Rows.Clear();
                 foreach (string file in files) grid.Rows.Add(Path.GetFileName(file));
-                status.Text = "已选 " + files.Count + " 个文件。";
+                previewSignature = "";
+            status.Text = "已选 " + files.Count + " 个文件。";
             }
         }
 
@@ -436,6 +439,15 @@ namespace AutoCADBlockAttrPlugin
             return options;
         }
 
+        private string CurrentSignature()
+        {
+            BatchTitleBlockProcessor.Options options = ReadOptions();
+            return String.Join("|", files.ToArray()) + "\\n" + options.BlockName + "\\n" +
+                options.TitleTag + "\\n" + options.DrawingTag + "\\n" + options.PageTag +
+                "\\n" + options.TotalTag + "\\n" + options.LeftToRight.ToString() +
+                "\\n" + options.AllowPartial.ToString();
+        }
+
         private void PreviewFiles(object sender, EventArgs e)
         {
             if (files.Count == 0) { MessageBox.Show("请先选择 DWG 文件。"); return; }
@@ -449,12 +461,18 @@ namespace AutoCADBlockAttrPlugin
                     r.Changed, r.Missing, r.Status, r.Error);
                 if (r.Status == "可处理") ok++;
             }
+            previewSignature = CurrentSignature();
             status.Text = "预览完成：" + ok + "/" + files.Count + " 个文件可以处理。";
         }
 
         private void WriteFiles(object sender, EventArgs e)
         {
             if (files.Count == 0) { MessageBox.Show("请先选择 DWG 文件。"); return; }
+            if (previewSignature != CurrentSignature())
+            {
+                MessageBox.Show("文件、角标块名、TAG 或排序设置发生变化；请先读取最新预览再确认写入。");
+                return;
+            }
             if (String.IsNullOrEmpty(output.Text)) { MessageBox.Show("请选择独立输出文件夹。"); return; }
             string dir = Path.GetFullPath(output.Text);
             if (MessageBox.Show("即将处理 " + files.Count + " 个 DWG，保存为新文件到：\r\n" +
