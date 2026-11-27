@@ -1,0 +1,496 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Drawing;
+using System.Windows.Forms;
+using Autodesk.AutoCAD.ApplicationServices;
+using Autodesk.AutoCAD.DatabaseServices;
+using Autodesk.AutoCAD.Runtime;
+
+namespace AutoCADBlockAttrPlugin
+{
+    /// <summary>在 AutoCAD 内处理未打开的 DWG：每个文件独立排序/计数，另存到输出目录。</summary>
+    public static class BatchTitleBlockProcessor
+    {
+        public sealed class Options
+        {
+            public string BlockName = "";
+            public string TitleTag = "";
+            public string DrawingTag = "";
+            public string PageTag = "";
+            public string TotalTag = "";
+            public bool LeftToRight = true;
+            public bool AllowPartial = false;
+        }
+
+        public sealed class Result
+        {
+            public string Input;
+            public string Output;
+            public string DrawingNo;
+            public string Title;
+            public int Count;
+            public int Changed;
+            public int Missing;
+            public string Status;
+            public string Error;
+        }
+
+        private sealed class Item
+        {
+            public ObjectId Id;
+            public double X;
+            public double Y;
+            public string Handle;
+        }
+
+        public static string[] ReadTags(string file, string blockName)
+        {
+            HashSet<string> tags = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            using (Database db = new Database(false, true))
+            {
+                db.ReadDwgFile(file, FileShare.Read, true, "");
+                using (Transaction tr = db.TransactionManager.StartTransaction())
+                {
+                    foreach (Item item in GetBlocks(db, tr, blockName))
+                    {
+                        BlockReference br = tr.GetObject(item.Id, OpenMode.ForRead) as BlockReference;
+                        foreach (ObjectId id in br.AttributeCollection)
+                        {
+                            AttributeReference ar = tr.GetObject(id, OpenMode.ForRead) as AttributeReference;
+                            if (ar != null && !String.IsNullOrEmpty(ar.Tag)) tags.Add(ar.Tag);
+                        }
+                    }
+                    tr.Commit();
+                }
+            }
+            return tags.OrderBy(t => t, StringComparer.OrdinalIgnoreCase).ToArray();
+        }
+
+        /// <summary>从首个 DWG 的顶层块属性自动推荐角标块及四项 TAG；无可靠映射则返回 null。</summary>
+        public static Options Detect(string file)
+        {
+            Options best = null;
+            int bestScore = -1;
+            using (Database db = new Database(false, true))
+            {
+                db.ReadDwgFile(file, FileShare.Read, true, "");
+                using (Transaction tr = db.TransactionManager.StartTransaction())
+                {
+                    BlockTable bt = tr.GetObject(db.BlockTableId, OpenMode.ForRead) as BlockTable;
+                    Dictionary<string, HashSet<string>> candidates =
+                        new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+                    foreach (ObjectId btrId in bt)
+                    {
+                        BlockTableRecord space = tr.GetObject(btrId, OpenMode.ForRead) as BlockTableRecord;
+                        if (space == null || (!space.IsLayout && btrId != bt[BlockTableRecord.ModelSpace])) continue;
+                        foreach (ObjectId id in space)
+                        {
+                            BlockReference br = tr.GetObject(id, OpenMode.ForRead) as BlockReference;
+                            if (br == null) continue;
+                            ObjectId effective = br.IsDynamicBlock ? br.DynamicBlockTableRecord : br.BlockTableRecord;
+                            BlockTableRecord definition = tr.GetObject(effective, OpenMode.ForRead) as BlockTableRecord;
+                            string name = definition == null ? br.Name : definition.Name;
+                            HashSet<string> tags;
+                            if (!candidates.TryGetValue(name, out tags))
+                            {
+                                tags = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                                candidates[name] = tags;
+                            }
+                            foreach (ObjectId aid in br.AttributeCollection)
+                            {
+                                AttributeReference ar = tr.GetObject(aid, OpenMode.ForRead) as AttributeReference;
+                                if (ar != null && !String.IsNullOrEmpty(ar.Tag)) tags.Add(ar.Tag);
+                            }
+                        }
+                    }
+                    foreach (KeyValuePair<string, HashSet<string>> pair in candidates)
+                    {
+                        if (pair.Value.Count < 4) continue;
+                        Options guess = new Options();
+                        guess.BlockName = pair.Key;
+                        int score = 0;
+                        HashSet<string> used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        string[] proposed = new string[4];
+                        for (int kind = 3; kind >= 0; kind--)
+                        {
+                            int localScore = 0;
+                            foreach (string tag in pair.Value)
+                            {
+                                if (used.Contains(tag)) continue;
+                                int val = TagScore(tag, kind);
+                                if (val > localScore)
+                                {
+                                    localScore = val;
+                                    proposed[kind] = tag;
+                                }
+                            }
+                            if (localScore > 0)
+                            {
+                                score += localScore;
+                                used.Add(proposed[kind]);
+                            }
+                        }
+                        if (used.Count != 4) continue;
+                        if (pair.Key.IndexOf("图框") >= 0 || pair.Key.IndexOf("图签") >= 0 ||
+                            pair.Key.IndexOf("角标") >= 0 || pair.Key.ToUpperInvariant().Contains("TITLE"))
+                            score += 3;
+                        if (score <= bestScore) continue;
+                        guess.TitleTag = proposed[0];
+                        guess.DrawingTag = proposed[1];
+                        guess.PageTag = proposed[2];
+                        guess.TotalTag = proposed[3];
+                        best = guess;
+                        bestScore = score;
+                    }
+                    tr.Commit();
+                }
+            }
+            return best;
+        }
+
+        private static int TagScore(string tag, int kind)
+        {
+            string t = tag.ToUpperInvariant();
+            bool total = t.Contains("TOTAL") || t.Contains("COUNT") ||
+                t.Contains("SHEETS") || t.Contains("共");
+            if (kind == 3) return total ? 5 : 0;
+            if (kind == 2)
+                return !total && (t.Contains("PAGE") || t.Contains("SHEET") ||
+                    t.Contains("页")) ? 4 : 0;
+            if (kind == 1)
+                return t.Contains("DWG") || t.Contains("DRAWING") || t.Contains("图号") ||
+                    t == "NO" || t.Contains("图纸编号") ? 4 : 0;
+            return t.Contains("TITLE") || t.Contains("NAME") || t.Contains("图名") ? 4 : 0;
+        }
+
+        public static Result Preview(string file, Options options)
+        {
+            return Process(file, null, options);
+        }
+
+        public static Result Write(string file, string output, Options options)
+        {
+            if (String.Equals(Path.GetFullPath(file), Path.GetFullPath(output), StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("输出文件不得覆盖输入 DWG。");
+            return Process(file, output, options);
+        }
+
+        private static Result Process(string file, string output, Options options)
+        {
+            Result result = new Result();
+            result.Input = file;
+            result.Output = output ?? "";
+            result.Status = "待写入";
+            try
+            {
+                if (!File.Exists(file)) throw new FileNotFoundException("DWG 不存在", file);
+                if (String.IsNullOrEmpty(options.BlockName))
+                    throw new InvalidOperationException("必须指定角标块名称，避免修改其他块。");
+                string[] tags = { options.TitleTag, options.DrawingTag, options.PageTag, options.TotalTag };
+                if (tags.Any(t => String.IsNullOrEmpty(t)) ||
+                    tags.Distinct(StringComparer.OrdinalIgnoreCase).Count() != 4)
+                    throw new InvalidOperationException("四个属性 TAG 必须填写且互不相同。");
+
+                SplitDrawingFileName(file, out result.DrawingNo, out result.Title);
+                if (String.IsNullOrEmpty(result.DrawingNo) || String.IsNullOrEmpty(result.Title))
+                    throw new InvalidOperationException("DWG 文件名须为：图号 空格 图名；为避免清空图名，已跳过。");
+                using (Database db = new Database(false, true))
+                {
+                    db.ReadDwgFile(file, FileShare.Read, true, "");
+                    using (Transaction tr = db.TransactionManager.StartTransaction())
+                    {
+                        List<Item> items = GetBlocks(db, tr, options.BlockName);
+                        if (options.LeftToRight)
+                            items = items.OrderBy(x => x.X).ThenByDescending(x => x.Y)
+                                .ThenBy(x => x.Handle, StringComparer.Ordinal).ToList();
+                        else
+                            items = items.OrderByDescending(x => x.Y).ThenBy(x => x.X)
+                                .ThenBy(x => x.Handle, StringComparer.Ordinal).ToList();
+                        result.Count = items.Count;
+                        if (items.Count == 0)
+                            throw new InvalidOperationException("文件中找不到指定的角标块：" + options.BlockName);
+                        for (int i = 0; i < items.Count; i++)
+                        {
+                            BlockReference br = tr.GetObject(items[i].Id, OpenMode.ForRead) as BlockReference;
+                            Dictionary<string, AttributeReference> found =
+                                new Dictionary<string, AttributeReference>(StringComparer.OrdinalIgnoreCase);
+                            foreach (ObjectId aid in br.AttributeCollection)
+                            {
+                                AttributeReference ar = tr.GetObject(aid, OpenMode.ForRead) as AttributeReference;
+                                if (ar != null && !String.IsNullOrEmpty(ar.Tag) && !found.ContainsKey(ar.Tag))
+                                    found.Add(ar.Tag, ar);
+                            }
+                            string[] values = { result.Title, result.DrawingNo,
+                                (i + 1).ToString(), items.Count.ToString() };
+                            for (int k = 0; k < tags.Length; k++)
+                            {
+                                AttributeReference ar;
+                                if (!found.TryGetValue(tags[k], out ar))
+                                {
+                                    result.Missing++;
+                                    continue;
+                                }
+                                if (!String.Equals(ar.TextString, values[k], StringComparison.Ordinal))
+                                {
+                                    result.Changed++;
+                                    if (output != null)
+                                    {
+                                        ar.UpgradeOpen();
+                                        ar.TextString = values[k];
+                                    }
+                                }
+                            }
+                        }
+                        if (result.Missing > 0 && !options.AllowPartial)
+                            throw new InvalidOperationException("有 " + result.Missing + " 个目标属性缺失；已阻止部分写入。");
+                        tr.Commit();
+                    }
+                    if (output != null)
+                    {
+                        string dir = Path.GetDirectoryName(output);
+                        if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                        if (File.Exists(output))
+                            throw new IOException("输出文件已存在，避免覆盖：" + output);
+                        db.SaveAs(output, DwgVersion.Current);
+                        result.Status = "成功";
+                    }
+                    else result.Status = "可处理";
+                }
+            }
+            catch (System.Exception ex)
+            {
+                result.Status = "失败";
+                result.Error = ex.Message;
+                result.Changed = 0;
+            }
+            return result;
+        }
+
+        private static List<Item> GetBlocks(Database db, Transaction tr, string name)
+        {
+            List<Item> result = new List<Item>();
+            BlockTable bt = tr.GetObject(db.BlockTableId, OpenMode.ForRead) as BlockTable;
+            foreach (ObjectId btrId in bt)
+            {
+                BlockTableRecord space = tr.GetObject(btrId, OpenMode.ForRead) as BlockTableRecord;
+                if (space == null || (!space.IsLayout && btrId != bt[BlockTableRecord.ModelSpace])) continue;
+                foreach (ObjectId id in space)
+                {
+                    BlockReference br = tr.GetObject(id, OpenMode.ForRead) as BlockReference;
+                    if (br == null) continue;
+                    ObjectId effectiveId = br.IsDynamicBlock ? br.DynamicBlockTableRecord : br.BlockTableRecord;
+                    BlockTableRecord definition = tr.GetObject(effectiveId, OpenMode.ForRead) as BlockTableRecord;
+                    string actual = definition == null ? br.Name : definition.Name;
+                    if (!String.Equals(actual, name, StringComparison.OrdinalIgnoreCase)) continue;
+                    result.Add(new Item { Id = id, X = br.Position.X, Y = br.Position.Y, Handle = br.Handle.ToString() });
+                }
+            }
+            return result;
+        }
+
+        public static void SplitDrawingFileName(string file, out string number, out string title)
+        {
+            string name = Path.GetFileNameWithoutExtension(file).Trim();
+            int i = name.IndexOf(' ');
+            if (i < 0) { number = name; title = ""; }
+            else { number = name.Substring(0, i).Trim(); title = name.Substring(i + 1).Trim(); }
+        }
+    }
+
+    public sealed class BatchTitleBlockForm : Form
+    {
+        private readonly DataGridView grid = new DataGridView();
+        private readonly TextBox blockName = new TextBox();
+        private readonly TextBox[] tags = { new TextBox(), new TextBox(), new TextBox(), new TextBox() };
+        private readonly RadioButton left = new RadioButton();
+        private readonly RadioButton top = new RadioButton();
+        private readonly TextBox output = new TextBox();
+        private readonly Label status = new Label();
+        private readonly List<string> files = new List<string>();
+        private readonly CheckBox partial = new CheckBox();
+        private string previewSignature = "";
+
+
+        public BatchTitleBlockForm()
+        {
+            Text = "批量角标修改 - AutoCAD DWG";
+            Width = 1120; Height = 740; MinimumSize = new Size(900, 630);
+            StartPosition = FormStartPosition.CenterParent;
+            TableLayoutPanel layout = new TableLayoutPanel();
+            layout.Dock = DockStyle.Fill; layout.ColumnCount = 1;
+            layout.RowCount = 4;
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 45));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 145));
+            layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
+            Controls.Add(layout);
+
+            FlowLayoutPanel bar = new FlowLayoutPanel();
+            bar.Dock = DockStyle.Fill;
+            Button pick = new Button(); pick.Text = "选择多个 DWG"; pick.Width = 125; pick.Click += PickFiles;
+            Button detect = new Button(); detect.Text = "自动识别角标"; detect.Width = 125; detect.Click += DetectFirstFile;
+            Button inspect = new Button(); inspect.Text = "读取预览"; inspect.Width = 100; inspect.Click += PreviewFiles;
+            Button write = new Button(); write.Text = "确认批量写入"; write.Width = 135; write.Click += WriteFiles;
+            bar.Controls.Add(pick); bar.Controls.Add(detect); bar.Controls.Add(inspect); bar.Controls.Add(write);
+            layout.Controls.Add(bar, 0, 0);
+
+            TableLayoutPanel settings = new TableLayoutPanel();
+            settings.Dock = DockStyle.Fill; settings.ColumnCount = 6; settings.RowCount = 3;
+            for (int c = 0; c < 6; c++) settings.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f / 6f));
+            for (int r = 0; r < 3; r++) settings.RowStyles.Add(new RowStyle(SizeType.Percent, 33.33f));
+            settings.Controls.Add(new Label { Text = "角标块名称（必须填写）", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft }, 0, 0);
+            blockName.Dock = DockStyle.Fill; settings.Controls.Add(blockName, 1, 0);
+            string[] labels = { "图名 TAG", "图号 TAG", "第几页 TAG", "共几页 TAG" };
+            for (int i = 0; i < 4; i++)
+            {
+                int c = i < 2 ? (i + 1) * 2 : (i - 2) * 2;
+                int row = i < 2 ? 1 : 2;
+                settings.Controls.Add(new Label { Text = labels[i], Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft }, c, row);
+                tags[i].Dock = DockStyle.Fill; settings.Controls.Add(tags[i], c + 1, row);
+            }
+            left.Text = "从左到右"; left.Checked = true; left.Dock = DockStyle.Fill;
+            top.Text = "从上到下"; top.Dock = DockStyle.Fill;
+            settings.Controls.Add(left, 2, 0); settings.Controls.Add(top, 3, 0);
+            partial.Text = "允许缺失属性（不推荐）"; partial.Dock = DockStyle.Fill;
+            settings.Controls.Add(partial, 4, 0);
+            Button folder = new Button { Text = "选择输出文件夹", Dock = DockStyle.Fill };
+            folder.Click += PickOutput; settings.Controls.Add(folder, 4, 2);
+            output.Dock = DockStyle.Fill; settings.Controls.Add(output, 5, 2);
+            layout.Controls.Add(settings, 0, 1);
+
+            grid.Dock = DockStyle.Fill; grid.AllowUserToAddRows = false;
+            grid.AllowUserToDeleteRows = false; grid.ReadOnly = true;
+            grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+            grid.RowHeadersVisible = false;
+            grid.Columns.Add("File", "DWG 文件");
+            grid.Columns.Add("Drawing", "图号");
+            grid.Columns.Add("Title", "图名");
+            grid.Columns.Add("Count", "页数");
+            grid.Columns.Add("Changed", "待修改属性");
+            grid.Columns.Add("Missing", "缺失属性");
+            grid.Columns.Add("Status", "状态");
+            grid.Columns.Add("Details", "提示");
+            layout.Controls.Add(grid, 0, 2);
+            status.Dock = DockStyle.Fill; status.TextAlign = ContentAlignment.MiddleLeft;
+            status.Text = "先选择 DWG，指定块名与四个实际 TAG，读取预览后再确认写入。输出为新文件，原图保持不变。";
+            layout.Controls.Add(status, 0, 3);
+        }
+
+        private void PickFiles(object sender, EventArgs e)
+        {
+            using (OpenFileDialog dlg = new OpenFileDialog())
+            {
+                dlg.Filter = "AutoCAD DWG (*.dwg)|*.dwg"; dlg.Multiselect = true;
+                if (dlg.ShowDialog(this) != DialogResult.OK) return;
+                foreach (string file in dlg.FileNames)
+                    if (!files.Contains(file, StringComparer.OrdinalIgnoreCase)) files.Add(file);
+                grid.Rows.Clear();
+                foreach (string file in files) grid.Rows.Add(Path.GetFileName(file));
+                previewSignature = "";
+            status.Text = "已选 " + files.Count + " 个文件。";
+            }
+        }
+
+        private void DetectFirstFile(object sender, EventArgs e)
+        {
+            if (files.Count == 0) { MessageBox.Show("请先选择 DWG 文件。"); return; }
+            try
+            {
+                BatchTitleBlockProcessor.Options found = BatchTitleBlockProcessor.Detect(files[0]);
+                if (found == null)
+                {
+                    MessageBox.Show("无法可靠识别四项角标 TAG。请手动输入块名称和 TAG，防止误改。");
+                    return;
+                }
+                blockName.Text = found.BlockName;
+                tags[0].Text = found.TitleTag;
+                tags[1].Text = found.DrawingTag;
+                tags[2].Text = found.PageTag;
+                tags[3].Text = found.TotalTag;
+                status.Text = "识别自：" + Path.GetFileName(files[0]) + "；已填入块名和四项 TAG，请预览确认。";
+                PreviewFiles(sender, e);
+            }
+            catch (System.Exception ex)
+            {
+                MessageBox.Show("自动识别失败：" + ex.Message);
+            }
+        }
+
+        private void PickOutput(object sender, EventArgs e)
+        {
+            using (FolderBrowserDialog dlg = new FolderBrowserDialog())
+            {
+                if (dlg.ShowDialog(this) == DialogResult.OK) output.Text = dlg.SelectedPath;
+            }
+        }
+
+        private BatchTitleBlockProcessor.Options ReadOptions()
+        {
+            BatchTitleBlockProcessor.Options options = new BatchTitleBlockProcessor.Options();
+            options.BlockName = blockName.Text.Trim();
+            options.TitleTag = tags[0].Text.Trim();
+            options.DrawingTag = tags[1].Text.Trim();
+            options.PageTag = tags[2].Text.Trim();
+            options.TotalTag = tags[3].Text.Trim();
+            options.LeftToRight = left.Checked;
+            options.AllowPartial = partial.Checked;
+            return options;
+        }
+
+        private string CurrentSignature()
+        {
+            BatchTitleBlockProcessor.Options options = ReadOptions();
+            return String.Join("|", files.ToArray()) + "\\n" + options.BlockName + "\\n" +
+                options.TitleTag + "\\n" + options.DrawingTag + "\\n" + options.PageTag +
+                "\\n" + options.TotalTag + "\\n" + options.LeftToRight.ToString() +
+                "\\n" + options.AllowPartial.ToString();
+        }
+
+        private void PreviewFiles(object sender, EventArgs e)
+        {
+            if (files.Count == 0) { MessageBox.Show("请先选择 DWG 文件。"); return; }
+            BatchTitleBlockProcessor.Options options = ReadOptions();
+            grid.Rows.Clear();
+            int ok = 0;
+            foreach (string file in files)
+            {
+                BatchTitleBlockProcessor.Result r = BatchTitleBlockProcessor.Preview(file, options);
+                grid.Rows.Add(Path.GetFileName(file), r.DrawingNo, r.Title, r.Count,
+                    r.Changed, r.Missing, r.Status, r.Error);
+                if (r.Status == "可处理") ok++;
+            }
+            previewSignature = CurrentSignature();
+            status.Text = "预览完成：" + ok + "/" + files.Count + " 个文件可以处理。";
+        }
+
+        private void WriteFiles(object sender, EventArgs e)
+        {
+            if (files.Count == 0) { MessageBox.Show("请先选择 DWG 文件。"); return; }
+            if (previewSignature != CurrentSignature())
+            {
+                MessageBox.Show("文件、角标块名、TAG 或排序设置发生变化；请先读取最新预览再确认写入。");
+                return;
+            }
+            if (String.IsNullOrEmpty(output.Text)) { MessageBox.Show("请选择独立输出文件夹。"); return; }
+            string dir = Path.GetFullPath(output.Text);
+            if (MessageBox.Show("即将处理 " + files.Count + " 个 DWG，保存为新文件到：\r\n" +
+                dir + "\r\n原 DWG 不会覆盖。确认？", "批量写入", MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning) != DialogResult.Yes) return;
+            BatchTitleBlockProcessor.Options options = ReadOptions();
+            grid.Rows.Clear();
+            int ok = 0;
+            foreach (string file in files)
+            {
+                string dest = Path.Combine(dir, Path.GetFileName(file));
+                BatchTitleBlockProcessor.Result r = BatchTitleBlockProcessor.Write(file, dest, options);
+                grid.Rows.Add(Path.GetFileName(file), r.DrawingNo, r.Title, r.Count,
+                    r.Changed, r.Missing, r.Status, r.Error);
+                if (r.Status == "成功") ok++;
+                grid.Refresh();
+            }
+            status.Text = "批量处理完成：" + ok + "/" + files.Count + " 个文件成功；其余见错误列。";
+        }
+    }
+}
