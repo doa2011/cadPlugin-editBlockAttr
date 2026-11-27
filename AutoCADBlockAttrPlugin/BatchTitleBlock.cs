@@ -194,6 +194,8 @@ namespace AutoCADBlockAttrPlugin
                     throw new InvalidOperationException("四个属性 TAG 必须填写且互不相同。");
 
                 SplitDrawingFileName(file, out result.DrawingNo, out result.Title);
+                if (String.IsNullOrEmpty(result.DrawingNo) || String.IsNullOrEmpty(result.Title))
+                    throw new InvalidOperationException("DWG 文件名须为：图号 空格 图名；为避免清空图名，已跳过。");
                 using (Database db = new Database(false, true))
                 {
                     db.ReadDwgFile(file, FileShare.Read, true, "");
