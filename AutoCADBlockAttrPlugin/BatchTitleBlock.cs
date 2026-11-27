@@ -314,6 +314,51 @@ namespace AutoCADBlockAttrPlugin
             return result;
         }
 
+        internal static CatalogEntry ReadCatalog(string file, Options options)
+        {
+            CatalogEntry entry = new CatalogEntry();
+            entry.File = file;
+            SplitDrawingFileName(file, out entry.Number, out entry.Title);
+            if (String.IsNullOrEmpty(entry.Title)) { entry.Title = Path.GetFileNameWithoutExtension(file); entry.Number = ""; }
+            try {
+                using (Database db = new Database(false,true)) {
+                    db.ReadDwgFile(file,FileShare.Read,true,"");
+                    using (Transaction tr = db.TransactionManager.StartTransaction()) {
+                        List<Item> items = GetBlocks(db,tr,null);
+                        HashSet<string> numbers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        HashSet<string> titles = new HashSet<string>(StringComparer.Ordinal);
+                        HashSet<string> totals = new HashSet<string>();
+                        int count = 0; int incomplete = 0;
+                        foreach (Item item in items) {
+                            Options rule = options.Rules.FirstOrDefault(x=>String.Equals(x.BlockName,item.Name,StringComparison.OrdinalIgnoreCase));
+                            if (rule == null) continue;
+                            BlockReference br = tr.GetObject(item.Id,OpenMode.ForRead) as BlockReference;
+                            Dictionary<string,string> attrs = new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase);
+                            foreach (ObjectId aid in br.AttributeCollection) {
+                                AttributeReference ar = tr.GetObject(aid,OpenMode.ForRead) as AttributeReference;
+                                if (ar != null && !attrs.ContainsKey(ar.Tag)) attrs.Add(ar.Tag,ar.TextString.Trim());
+                            }
+                            string n,t,p,total;
+                            if (!attrs.TryGetValue(rule.DrawingTag,out n) || !attrs.TryGetValue(rule.TitleTag,out t) || !attrs.TryGetValue(rule.PageTag,out p) || !attrs.TryGetValue(rule.TotalTag,out total)) { incomplete++; continue; }
+                            count++; if (n.Length>0) numbers.Add(n); if(t.Length>0) titles.Add(t); if(total.Length>0) totals.Add(total);
+                        }
+                        if(count==0) entry.Warning="未读取有效角标，使用文件名，页数留空";
+                        else {
+                            if(numbers.Count==1) entry.Number=numbers.First();
+                            if(titles.Count==1) entry.Title=titles.First();
+                            entry.Pages=count.ToString();
+                            if(numbers.Count!=1 || titles.Count!=1) entry.Warning="图名或图号缺失/不一致，需确认；";
+                            if(totals.Any(x=>x!=entry.Pages)) entry.Warning+="角标总页数与实际数量不一致；";
+                            if(incomplete>0) { entry.Pages=""; entry.Warning+="存在缺失属性的角标，页数待核查；"; }
+                        }
+                        tr.Commit();
+                    }
+                }
+            } catch(System.Exception ex) { entry.Pages=""; entry.Warning="读取失败："+ex.Message; }
+            if(String.IsNullOrEmpty(entry.Number)) entry.Warning+=" 图号为空；";
+            return entry;
+        }
+
         public static void SplitDrawingFileName(string file, out string number, out string title)
         {
             string name = Path.GetFileNameWithoutExtension(file).Trim();
@@ -362,7 +407,8 @@ namespace AutoCADBlockAttrPlugin
             remove.Click += RemoveFiles;
             Button clear = new Button { Text = "清空列表", Width = 100 };
             clear.Click += delegate { if (files.Count > 0 && MessageBox.Show("清空待处理列表？不会删除原始文件。", "确认", MessageBoxButtons.YesNo) == DialogResult.Yes) { files.Clear(); RefreshFileList(); } };
-            bar.Controls.Add(pick); bar.Controls.Add(remove); bar.Controls.Add(clear); bar.Controls.Add(detect); bar.Controls.Add(inspect); bar.Controls.Add(write);
+            Button catalog = new Button { Text = "生成图纸目录", Width = 125 }; catalog.Click += delegate { if(files.Count==0) { MessageBox.Show("请先选择 DWG 文件"); return; } using(CatalogForm form=new CatalogForm(files,ReadOptions())) form.ShowDialog(this); };
+            bar.Controls.Add(catalog); bar.Controls.Add(pick); bar.Controls.Add(remove); bar.Controls.Add(clear); bar.Controls.Add(detect); bar.Controls.Add(inspect); bar.Controls.Add(write);
             layout.Controls.Add(bar, 0, 0);
 
             FlowLayoutPanel settings = new FlowLayoutPanel { Dock = DockStyle.Fill };
@@ -570,6 +616,152 @@ namespace AutoCADBlockAttrPlugin
                 catch (System.Exception ex) { MessageBox.Show(ex.Message); }
             }
             else if (ok == 0) MessageBox.Show(status.Text);
+        }
+    }
+
+    internal sealed class CatalogEntry
+    {
+        internal string File="", Number="", Title="", Pages="", Size="A3", Note="", Warning="";
+    }
+
+    internal sealed class CatalogForm : Form
+    {
+        private readonly DataGridView data = new DataGridView();
+        private readonly TextBox project = new TextBox(), task = new TextBox(), edition = new TextBox(), stage = new TextBox(), date = new TextBox();
+        private readonly CheckBox pdf = new CheckBox { Text="同时导出 PDF（需 Excel）", AutoSize=true };
+        internal CatalogForm(IEnumerable<string> files, BatchTitleBlockProcessor.Options options)
+        {
+            Text="图纸目录生成（只读 DWG）"; Width=1160; Height=700; StartPosition=FormStartPosition.CenterParent;
+            TableLayoutPanel panel=new TableLayoutPanel { Dock=DockStyle.Fill, RowCount=3, ColumnCount=1 };
+            panel.RowStyles.Add(new RowStyle(SizeType.Absolute,78)); panel.RowStyles.Add(new RowStyle(SizeType.Percent,100)); panel.RowStyles.Add(new RowStyle(SizeType.Absolute,45)); Controls.Add(panel);
+            FlowLayoutPanel fields=new FlowLayoutPanel { Dock=DockStyle.Fill,AutoScroll=true };
+            string[] labels={"工程名称","任务编号","版本号","设计阶段","完成时间"};
+            TextBox[] boxes={project,task,edition,stage,date};
+            for(int i=0;i<boxes.Length;i++){ fields.Controls.Add(new Label {Text=labels[i],AutoSize=true}); boxes[i].Width=i==0?260:100; fields.Controls.Add(boxes[i]); }
+            stage.Text="施工图"; date.Text=DateTime.Now.ToString("yyyy.MM"); panel.Controls.Add(fields,0,0);
+            data.Dock=DockStyle.Fill; data.AutoSizeColumnsMode=DataGridViewAutoSizeColumnsMode.Fill; data.AllowUserToAddRows=true;
+            foreach(string title in new string[]{"图号","图纸名称","页数","图幅","备注","核查提示","来源"}) data.Columns.Add(title,title);
+            data.Columns[5].ReadOnly=true; data.Columns[6].ReadOnly=true;
+            foreach(DataGridViewColumn col in data.Columns) col.SortMode=DataGridViewColumnSortMode.NotSortable;
+            panel.Controls.Add(data,0,1);
+            FlowLayoutPanel actions=new FlowLayoutPanel {Dock=DockStyle.Fill};
+            Button sort=new Button {Text="按图号排序",Width=125}; sort.Click+=delegate { SortRows(); };
+            Button save=new Button {Text="生成 A3 目录",Width=150}; save.Click+=Save;
+            actions.Controls.Add(sort); actions.Controls.Add(save); actions.Controls.Add(pdf); panel.Controls.Add(actions,0,2);
+            foreach(string file in files){ CatalogEntry e=BatchTitleBlockProcessor.ReadCatalog(file,options); data.Rows.Add(e.Number,e.Title,e.Pages,e.Size,e.Note,e.Warning,e.File); }
+            SortRows();
+        }
+        private List<CatalogEntry> Entries()
+        {
+            data.EndEdit(); List<CatalogEntry> entries=new List<CatalogEntry>();
+            foreach(DataGridViewRow row in data.Rows) {
+                if(row.IsNewRow) continue;
+                string[] v=new string[7]; for(int i=0;i<7;i++) v[i]=Convert.ToString(row.Cells[i].Value).Trim();
+                if(v[0]=="" && v[1]=="" && v[6]=="") continue;
+                entries.Add(new CatalogEntry {Number=v[0],Title=v[1],Pages=v[2],Size=v[3]==""?"A3":v[3],Note=v[4],Warning=v[5],File=v[6]});
+            }
+            entries.Sort(delegate(CatalogEntry a,CatalogEntry b){ int n=Compare(a.Number,b.Number); return n!=0?n:StringComparer.OrdinalIgnoreCase.Compare(a.File,b.File); });
+            return entries;
+        }
+        private void SortRows(){ List<CatalogEntry> entries=Entries(); data.Rows.Clear(); foreach(CatalogEntry e in entries) data.Rows.Add(e.Number,e.Title,e.Pages,e.Size,e.Note,e.Warning,e.File); }
+        internal static int Compare(string a,string b)
+        {
+            if(a.Length==0 || b.Length==0) return a.Length==b.Length?0:a.Length==0?1:-1;
+            string[] roman={"Ⅰ","Ⅱ","Ⅲ","Ⅳ","Ⅴ","Ⅵ","Ⅶ","Ⅷ","Ⅸ","Ⅹ","Ⅺ","Ⅻ"};
+            for(int i=0;i<roman.Length;i++){ a=a.Replace(roman[i],(i+1).ToString()); b=b.Replace(roman[i],(i+1).ToString()); }
+            string[] aa=System.Text.RegularExpressions.Regex.Split(a,@"([0-9]+)"), bb=System.Text.RegularExpressions.Regex.Split(b,@"([0-9]+)");
+            for(int i=0;i<Math.Min(aa.Length,bb.Length);i++){
+                string x=aa[i],y=bb[i]; int n;
+                if(i%2==1){ x=x.TrimStart('0'); y=y.TrimStart('0'); n=x.Length.CompareTo(y.Length); if(n==0)n=String.CompareOrdinal(x,y); }
+                else n=StringComparer.OrdinalIgnoreCase.Compare(x,y);
+                if(n!=0)return n;
+            }
+            return aa.Length.CompareTo(bb.Length);
+        }
+        private void Save(object sender,EventArgs args)
+        {
+            List<CatalogEntry> entries=Entries(); if(entries.Count==0){MessageBox.Show("没有目录记录");return;}
+            foreach(CatalogEntry e in entries){int n;if(e.Pages!="" && (!Int32.TryParse(e.Pages,out n)||n<=0)){MessageBox.Show("页数必须为空或正整数："+e.Title);return;}}
+            using(SaveFileDialog dlg=new SaveFileDialog {Filter="Excel 工作簿 (*.xlsx)|*.xlsx",FileName="图纸目录.xlsx",OverwritePrompt=true}){
+                if(dlg.ShowDialog(this)!=DialogResult.OK)return;
+                try {
+                    CatalogWorkbook.Write(dlg.FileName,entries,new string[]{project.Text,task.Text,edition.Text,stage.Text,date.Text});
+                    List<string> warnings=new List<string>();
+                    foreach(CatalogEntry e in entries){ if(e.Warning!="")warnings.Add(e.File+" "+e.Warning); if(e.Number=="")warnings.Add(e.Title+"：图号为空"); }
+                    foreach(var g in entries.Where(x=>x.Number!="").GroupBy(x=>x.Number,StringComparer.OrdinalIgnoreCase)) if(g.Count()>1)warnings.Add("重复图号："+g.Key);
+                    if(pdf.Checked){try{CatalogWorkbook.Pdf(dlg.FileName);}catch(System.Exception ex){warnings.Add("PDF 未生成："+ex.Message);}}
+                    if(warnings.Count>0) System.IO.File.WriteAllLines(Path.Combine(Path.GetDirectoryName(dlg.FileName),Path.GetFileNameWithoutExtension(dlg.FileName)+"_异常记录.txt"),warnings.ToArray(),System.Text.Encoding.UTF8);
+                    if(MessageBox.Show("已生成 "+entries.Count+" 条记录，共 "+((entries.Count+36)/37)+" 页。\r\n异常："+warnings.Count+"\r\n"+String.Join("\r\n",warnings.Take(10).ToArray())+"\r\n是否打开文件夹？","目录生成完成",MessageBoxButtons.YesNo)==DialogResult.Yes)
+                        System.Diagnostics.Process.Start("explorer.exe","\""+Path.GetDirectoryName(dlg.FileName)+"\"");
+                }catch(System.Exception ex){MessageBox.Show("目录生成失败："+ex.Message);}
+            }
+        }
+    }
+
+    internal static class CatalogWorkbook
+    {
+        private const string Ns="http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+        private const string Rel="http://schemas.openxmlformats.org/officeDocument/2006/relationships/";
+        private static string Esc(string s){return System.Security.SecurityElement.Escape(s??"");}
+        private static void Put(System.IO.Packaging.PackagePart p,string xml){using(StreamWriter w=new StreamWriter(p.GetStream(FileMode.Create,FileAccess.Write),new System.Text.UTF8Encoding(false)))w.Write(xml);}
+        private static string Cell(int col,int row,string v,int style){return "<c r=\""+(char)('A'+col)+row+"\" s=\""+style+"\" t=\"inlineStr\"><is><t xml:space=\"preserve\">"+Esc(v)+"</t></is></c>";}
+        private static string Row(int r,string[] values,double height,int style)
+        {
+            System.Text.StringBuilder b=new System.Text.StringBuilder("<row r=\""+r+"\" ht=\""+height.ToString(System.Globalization.CultureInfo.InvariantCulture)+"\" customHeight=\"1\">");
+            for(int i=0;i<values.Length;i++) b.Append(Cell(i,r,values[i],style==3 && i==1?4:style));
+            return b.Append("</row>").ToString();
+        }
+        internal static void Write(string path,List<CatalogEntry> entries,string[] meta)
+        {
+            int pages=(entries.Count+36)/37; string temp=Path.Combine(Path.GetDirectoryName(path),Guid.NewGuid().ToString("N")+".xlsx");
+            try{
+            using(System.IO.Packaging.Package pkg=System.IO.Packaging.Package.Open(temp,FileMode.CreateNew,FileAccess.ReadWrite)){
+                var wb=pkg.CreatePart(new Uri("/xl/workbook.xml",UriKind.Relative),"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml");
+                pkg.CreateRelationship(new Uri("xl/workbook.xml",UriKind.Relative),System.IO.Packaging.TargetMode.Internal,Rel+"officeDocument");
+                var st=pkg.CreatePart(new Uri("/xl/styles.xml",UriKind.Relative),"application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml");
+                wb.CreateRelationship(new Uri("styles.xml",UriKind.Relative),System.IO.Packaging.TargetMode.Internal,Rel+"styles");
+                Put(st,"<styleSheet xmlns=\""+Ns+"\"><fonts count=\"3\"><font><sz val=\"12\"/><name val=\"宋体\"/></font><font><b/><sz val=\"20\"/><name val=\"宋体\"/></font><font><b/><sz val=\"12\"/><name val=\"宋体\"/></font></fonts><fills count=\"2\"><fill><patternFill patternType=\"none\"/></fill><fill><patternFill patternType=\"gray125\"/></fill></fills><borders count=\"2\"><border><left/><right/><top/><bottom/><diagonal/></border><border><left style=\"thin\"/><right style=\"thin\"/><top style=\"thin\"/><bottom style=\"thin\"/><diagonal/></border></borders><cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/></cellStyleXfs><cellXfs count=\"5\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\"/><xf numFmtId=\"0\" fontId=\"1\" fillId=\"0\" borderId=\"0\" xfId=\"0\" applyAlignment=\"1\"><alignment horizontal=\"center\" vertical=\"center\"/></xf><xf numFmtId=\"0\" fontId=\"2\" fillId=\"0\" borderId=\"1\" xfId=\"0\" applyAlignment=\"1\"><alignment horizontal=\"center\" vertical=\"center\"/></xf><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"1\" xfId=\"0\" applyAlignment=\"1\"><alignment horizontal=\"center\" vertical=\"center\" shrinkToFit=\"1\"/></xf><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"1\" xfId=\"0\" applyAlignment=\"1\"><alignment horizontal=\"left\" vertical=\"center\" shrinkToFit=\"1\"/></xf></cellXfs><cellStyles count=\"1\"><cellStyle name=\"Normal\" xfId=\"0\" builtinId=\"0\"/></cellStyles></styleSheet>");
+                System.Text.StringBuilder sheets=new System.Text.StringBuilder(), names=new System.Text.StringBuilder();
+                for(int p=0;p<pages;p++){
+                    string name="目录"+(p+1), loc="worksheets/sheet"+(p+1)+".xml";
+                    var part=pkg.CreatePart(new Uri("/xl/"+loc,UriKind.Relative),"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml");
+                    var relation=wb.CreateRelationship(new Uri(loc,UriKind.Relative),System.IO.Packaging.TargetMode.Internal,Rel+"worksheet");
+                    sheets.Append("<sheet name=\""+name+"\" sheetId=\""+(p+1)+"\" r:id=\""+relation.Id+"\"/>");
+                    names.Append("<definedName name=\"_xlnm.Print_Area\" localSheetId=\""+p+"\">'"+name+"'!$A$1:$G$41</definedName>");
+                    System.Text.StringBuilder x=new System.Text.StringBuilder("<worksheet xmlns=\""+Ns+"\"><sheetPr><pageSetUpPr fitToPage=\"1\"/></sheetPr><cols>");
+                    double[] widths={6,34,6,12,9,10,10};
+                    for(int i=0;i<widths.Length;i++)x.Append("<col min=\""+(i+1)+"\" max=\""+(i+1)+"\" width=\""+widths[i]+"\" customWidth=\"1\"/>");
+                    x.Append("</cols><sheetData>");
+                    x.Append(Row(1,new string[]{"图  纸  目  录    共 "+pages+" 页   第 "+(p+1)+" 页","","","","","",""},27,1));
+                    x.Append(Row(2,new string[]{"工程名称",meta[0],"","任务编号",meta[1],"版本号",meta[2]},18,3));
+                    x.Append(Row(3,new string[]{"","","","设计阶段",meta[3],"完成时间",meta[4]},18,3));
+                    x.Append(Row(4,new string[]{"序号","图纸名称","页数","图号","","图幅","备注"},18,2));
+                    for(int i=0;i<37;i++){
+                        int index=p*37+i; CatalogEntry e=index<entries.Count?entries[index]:null;
+                        x.Append(Row(i+5,e==null?new string[]{"","","","","","",""}:new string[]{(index+1).ToString(),e.Title,e.Pages,e.Number,"",e.Size,e.Note},15.75,3));
+                    }
+                    x.Append("</sheetData><mergeCells><mergeCell ref=\"A1:G1\"/><mergeCell ref=\"A2:A3\"/><mergeCell ref=\"B2:C3\"/>");
+                    for(int i=4;i<=41;i++)x.Append("<mergeCell ref=\"D"+i+":E"+i+"\"/>");
+                    x.Append("</mergeCells><printOptions horizontalCentered=\"1\"/><pageMargins left=\"0.3\" right=\"0.3\" top=\"0.3\" bottom=\"0.3\" header=\"0.1\" footer=\"0.1\"/><pageSetup paperSize=\"8\" orientation=\"portrait\" fitToWidth=\"1\" fitToHeight=\"1\"/></worksheet>");
+                    Put(part,x.ToString());
+                }
+                Put(wb,"<workbook xmlns=\""+Ns+"\" xmlns:r=\""+Rel.TrimEnd('/')+"\"><sheets>"+sheets+"</sheets><definedNames>"+names+"</definedNames></workbook>");
+            }
+            if(File.Exists(path))File.Replace(temp,path,null);else File.Move(temp,path);
+            }finally{if(File.Exists(temp))File.Delete(temp);}
+        }
+        internal static void Pdf(string path)
+        {
+            Type t=Type.GetTypeFromProgID("Excel.Application"); if(t==null)throw new InvalidOperationException("未安装 Excel");
+            object app=null,books=null,book=null; var get=System.Reflection.BindingFlags.GetProperty; var call=System.Reflection.BindingFlags.InvokeMethod;
+            try{app=Activator.CreateInstance(t); books=t.InvokeMember("Workbooks",get,null,app,null);
+                book=books.GetType().InvokeMember("Open",call,null,books,new object[]{path});
+                book.GetType().InvokeMember("ExportAsFixedFormat",call,null,book,new object[]{0,Path.ChangeExtension(path,"pdf")});
+            }finally{
+                if(book!=null){try{book.GetType().InvokeMember("Close",call,null,book,new object[]{false});}catch{} System.Runtime.InteropServices.Marshal.FinalReleaseComObject(book);}
+                if(books!=null)System.Runtime.InteropServices.Marshal.FinalReleaseComObject(books);
+                if(app!=null){try{t.InvokeMember("Quit",call,null,app,null);}catch{} System.Runtime.InteropServices.Marshal.FinalReleaseComObject(app);}
+            }
         }
     }
 }
