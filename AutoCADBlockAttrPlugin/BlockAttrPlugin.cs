@@ -113,7 +113,7 @@ namespace AutoCADBlockAttrPlugin
             ed.WriteMessage("\n  当前 CAD：ACADVER="
                 + (acadVer.Length > 0 ? acadVer : "未知")
                 + (currentYear != "未知" ? "（AutoCAD " + currentYear + "）" : ""));
-            ed.WriteMessage("\n  命令    ：EditBlockAtt      帮助：EditBlockAttHelp");
+            ed.WriteMessage("\n  命令    ：EditBlockAtt      批量：EditBlockAttBatch      帮助：EditBlockAttHelp");
 
             if (currentYear != "未知" && targetYear != "未知"
                 && currentYear != targetYear)
@@ -225,6 +225,13 @@ namespace AutoCADBlockAttrPlugin
                     LoadBanner.Write(ed, false);
             }
             catch { }
+        }
+
+        [CommandMethod("EditBlockAttBatch")]
+        public void EditBlockAttBatchCmd()
+        {
+            using (BatchTitleBlockForm form = new BatchTitleBlockForm())
+                CadHost.ShowDialog(form);
         }
 
         [CommandMethod("EditBlockAtt")]
