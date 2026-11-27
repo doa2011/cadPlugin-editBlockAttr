@@ -16,6 +16,9 @@ namespace AutoCADBlockAttrPlugin
         public sealed class Options
         {
             public string BlockName = "";
+            public List<Options> Rules = new List<Options>();
+            public int Start = 1;
+            public int Total = 0;
             public string TitleTag = "";
             public string DrawingTag = "";
             public string PageTag = "";
@@ -43,6 +46,7 @@ namespace AutoCADBlockAttrPlugin
             public double X;
             public double Y;
             public string Handle;
+            public string Name;
         }
 
         public static string[] ReadTags(string file, string blockName)
@@ -69,10 +73,9 @@ namespace AutoCADBlockAttrPlugin
         }
 
         /// <summary>从首个 DWG 的顶层块属性自动推荐角标块及四项 TAG；无可靠映射则返回 null。</summary>
-        public static Options Detect(string file)
+        public static Dictionary<string, HashSet<string>> Scan(string file)
         {
-            Options best = null;
-            int bestScore = -1;
+
             using (Database db = new Database(false, true))
             {
                 db.ReadDwgFile(file, FileShare.Read, true, "");
@@ -105,7 +108,17 @@ namespace AutoCADBlockAttrPlugin
                             }
                         }
                     }
-                    foreach (KeyValuePair<string, HashSet<string>> pair in candidates)
+                    tr.Commit();
+                    return candidates;
+                }
+            }
+        }
+
+        public static Options Guess(string name, HashSet<string> tags)
+        {
+            Options best = null;
+            int bestScore = -1;
+            foreach (KeyValuePair<string, HashSet<string>> pair in new Dictionary<string, HashSet<string>> {{name,tags}})
                     {
                         if (pair.Value.Count < 4) continue;
                         Options guess = new Options();
@@ -144,9 +157,6 @@ namespace AutoCADBlockAttrPlugin
                         best = guess;
                         bestScore = score;
                     }
-                    tr.Commit();
-                }
-            }
             return best;
         }
 
@@ -186,12 +196,15 @@ namespace AutoCADBlockAttrPlugin
             try
             {
                 if (!File.Exists(file)) throw new FileNotFoundException("DWG 不存在", file);
-                if (String.IsNullOrEmpty(options.BlockName))
+                if (options.Rules.Count == 0)
                     throw new InvalidOperationException("必须指定角标块名称，避免修改其他块。");
-                string[] tags = { options.TitleTag, options.DrawingTag, options.PageTag, options.TotalTag };
+                foreach (Options rule in options.Rules)
+                {
+                string[] tags = { rule.TitleTag, rule.DrawingTag, rule.PageTag, rule.TotalTag };
                 if (tags.Any(t => String.IsNullOrEmpty(t)) ||
                     tags.Distinct(StringComparer.OrdinalIgnoreCase).Count() != 4)
                     throw new InvalidOperationException("四个属性 TAG 必须填写且互不相同。");
+                }
 
                 SplitDrawingFileName(file, out result.DrawingNo, out result.Title);
                 if (String.IsNullOrEmpty(result.DrawingNo) || String.IsNullOrEmpty(result.Title))
@@ -201,7 +214,7 @@ namespace AutoCADBlockAttrPlugin
                     db.ReadDwgFile(file, FileShare.Read, true, "");
                     using (Transaction tr = db.TransactionManager.StartTransaction())
                     {
-                        List<Item> items = GetBlocks(db, tr, options.BlockName);
+                        List<Item> items = GetBlocks(db, tr, null).Where(x => options.Rules.Any(rule => String.Equals(rule.BlockName,x.Name,StringComparison.OrdinalIgnoreCase))).ToList();
                         if (options.LeftToRight)
                             items = items.OrderBy(x => x.X).ThenByDescending(x => x.Y)
                                 .ThenBy(x => x.Handle, StringComparer.Ordinal).ToList();
@@ -213,6 +226,8 @@ namespace AutoCADBlockAttrPlugin
                             throw new InvalidOperationException("文件中找不到指定的角标块：" + options.BlockName);
                         for (int i = 0; i < items.Count; i++)
                         {
+                            Options rule = options.Rules.First(x => String.Equals(x.BlockName,items[i].Name,StringComparison.OrdinalIgnoreCase));
+                            string[] tags = { rule.TitleTag, rule.DrawingTag, rule.PageTag, rule.TotalTag };
                             BlockReference br = tr.GetObject(items[i].Id, OpenMode.ForRead) as BlockReference;
                             Dictionary<string, AttributeReference> found =
                                 new Dictionary<string, AttributeReference>(StringComparer.OrdinalIgnoreCase);
@@ -223,7 +238,7 @@ namespace AutoCADBlockAttrPlugin
                                     found.Add(ar.Tag, ar);
                             }
                             string[] values = { result.Title, result.DrawingNo,
-                                (i + 1).ToString(), items.Count.ToString() };
+                                (i + options.Start).ToString(), (options.Total > 0 ? options.Total : items.Count).ToString() };
                             for (int k = 0; k < tags.Length; k++)
                             {
                                 AttributeReference ar;
@@ -283,8 +298,8 @@ namespace AutoCADBlockAttrPlugin
                     ObjectId effectiveId = br.IsDynamicBlock ? br.DynamicBlockTableRecord : br.BlockTableRecord;
                     BlockTableRecord definition = tr.GetObject(effectiveId, OpenMode.ForRead) as BlockTableRecord;
                     string actual = definition == null ? br.Name : definition.Name;
-                    if (!String.Equals(actual, name, StringComparison.OrdinalIgnoreCase)) continue;
-                    result.Add(new Item { Id = id, X = br.Position.X, Y = br.Position.Y, Handle = br.Handle.ToString() });
+                    if (name != null && !String.Equals(actual, name, StringComparison.OrdinalIgnoreCase)) continue;
+                    result.Add(new Item { Id = id, Name = actual, X = br.Position.X, Y = br.Position.Y, Handle = br.Handle.ToString() });
                 }
             }
             return result;
@@ -302,8 +317,8 @@ namespace AutoCADBlockAttrPlugin
     public sealed class BatchTitleBlockForm : Form
     {
         private readonly DataGridView grid = new DataGridView();
-        private readonly TextBox blockName = new TextBox();
-        private readonly TextBox[] tags = { new TextBox(), new TextBox(), new TextBox(), new TextBox() };
+        private readonly DataGridView rules = new DataGridView();
+        
         private readonly RadioButton left = new RadioButton();
         private readonly RadioButton top = new RadioButton();
         private readonly TextBox output = new TextBox();
@@ -322,7 +337,7 @@ namespace AutoCADBlockAttrPlugin
             layout.Dock = DockStyle.Fill; layout.ColumnCount = 1;
             layout.RowCount = 4;
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 45));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 145));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 300));
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
             Controls.Add(layout);
@@ -330,35 +345,30 @@ namespace AutoCADBlockAttrPlugin
             FlowLayoutPanel bar = new FlowLayoutPanel();
             bar.Dock = DockStyle.Fill;
             Button pick = new Button(); pick.Text = "选择多个 DWG"; pick.Width = 125; pick.Click += PickFiles;
-            Button detect = new Button(); detect.Text = "自动识别角标"; detect.Width = 125; detect.Click += DetectFirstFile;
+            Button detect = new Button(); detect.Text = "预读全部块"; detect.Width = 125; detect.Click += DetectFirstFile;
             Button inspect = new Button(); inspect.Text = "读取预览"; inspect.Width = 100; inspect.Click += PreviewFiles;
             Button write = new Button(); write.Text = "确认批量写入"; write.Width = 135; write.Click += WriteFiles;
             bar.Controls.Add(pick); bar.Controls.Add(detect); bar.Controls.Add(inspect); bar.Controls.Add(write);
             layout.Controls.Add(bar, 0, 0);
 
-            TableLayoutPanel settings = new TableLayoutPanel();
-            settings.Dock = DockStyle.Fill; settings.ColumnCount = 6; settings.RowCount = 3;
-            for (int c = 0; c < 6; c++) settings.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f / 6f));
-            for (int r = 0; r < 3; r++) settings.RowStyles.Add(new RowStyle(SizeType.Percent, 33.33f));
-            settings.Controls.Add(new Label { Text = "角标块名称（必须填写）", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft }, 0, 0);
-            blockName.Dock = DockStyle.Fill; settings.Controls.Add(blockName, 1, 0);
-            string[] labels = { "图名 TAG", "图号 TAG", "第几页 TAG", "共几页 TAG" };
-            for (int i = 0; i < 4; i++)
-            {
-                int c = i < 2 ? (i + 1) * 2 : (i - 2) * 2;
-                int row = i < 2 ? 1 : 2;
-                settings.Controls.Add(new Label { Text = labels[i], Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft }, c, row);
-                tags[i].Dock = DockStyle.Fill; settings.Controls.Add(tags[i], c + 1, row);
-            }
-            left.Text = "从左到右"; left.Checked = true; left.Dock = DockStyle.Fill;
-            top.Text = "从上到下"; top.Dock = DockStyle.Fill;
-            settings.Controls.Add(left, 2, 0); settings.Controls.Add(top, 3, 0);
-            partial.Text = "允许缺失属性（不推荐）"; partial.Dock = DockStyle.Fill;
-            settings.Controls.Add(partial, 4, 0);
-            Button folder = new Button { Text = "选择输出文件夹", Dock = DockStyle.Fill };
-            folder.Click += PickOutput; settings.Controls.Add(folder, 4, 2);
-            output.Dock = DockStyle.Fill; settings.Controls.Add(output, 5, 2);
-            layout.Controls.Add(settings, 0, 1);
+            FlowLayoutPanel settings = new FlowLayoutPanel { Dock = DockStyle.Fill };
+            left.Text = "从左到右"; left.Checked = true;
+            top.Text = "从上到下"; partial.Text = "允许缺失属性";
+            settings.Controls.Add(left); settings.Controls.Add(top); settings.Controls.Add(partial);
+            Button folder = new Button { Text = "输出文件夹", Width = 100 };
+            folder.Click += PickOutput; settings.Controls.Add(folder);
+            output.Width = 260; settings.Controls.Add(output);
+            rules.Dock = DockStyle.Fill; rules.AllowUserToAddRows = false;
+            rules.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+            rules.Columns.Add(new DataGridViewCheckBoxColumn { Name = "Enabled", HeaderText = "启用" });
+            rules.Columns.Add("Block", "块名"); rules.Columns[1].ReadOnly = true;
+            rules.Columns.Add("Tags", "实际 TAG"); rules.Columns[2].ReadOnly = true;
+            foreach (string label in new string[] {"图名","图号","第几页","共几页"}) rules.Columns.Add(label,label);
+            TableLayoutPanel upper = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1 };
+            upper.RowStyles.Add(new RowStyle(SizeType.Absolute,40));
+            upper.RowStyles.Add(new RowStyle(SizeType.Percent,100));
+            upper.Controls.Add(settings,0,0); upper.Controls.Add(rules,0,1);
+            layout.Controls.Add(upper,0,1);
 
             grid.Dock = DockStyle.Fill; grid.AllowUserToAddRows = false;
             grid.AllowUserToDeleteRows = false; grid.ReadOnly = true;
@@ -389,33 +399,36 @@ namespace AutoCADBlockAttrPlugin
                 grid.Rows.Clear();
                 foreach (string file in files) grid.Rows.Add(Path.GetFileName(file));
                 previewSignature = "";
-            status.Text = "已选 " + files.Count + " 个文件。";
+            DetectFirstFile(sender,e);
             }
         }
 
         private void DetectFirstFile(object sender, EventArgs e)
         {
             if (files.Count == 0) { MessageBox.Show("请先选择 DWG 文件。"); return; }
-            try
+            rules.Rows.Clear(); previewSignature = "";
+            Dictionary<string, HashSet<string>> all = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+            List<string> errors = new List<string>();
+            foreach (string file in files)
             {
-                BatchTitleBlockProcessor.Options found = BatchTitleBlockProcessor.Detect(files[0]);
-                if (found == null)
-                {
-                    MessageBox.Show("无法可靠识别四项角标 TAG。请手动输入块名称和 TAG，防止误改。");
-                    return;
-                }
-                blockName.Text = found.BlockName;
-                tags[0].Text = found.TitleTag;
-                tags[1].Text = found.DrawingTag;
-                tags[2].Text = found.PageTag;
-                tags[3].Text = found.TotalTag;
-                status.Text = "识别自：" + Path.GetFileName(files[0]) + "；已填入块名和四项 TAG，请预览确认。";
-                PreviewFiles(sender, e);
+                try {
+                    foreach (KeyValuePair<string, HashSet<string>> pair in BatchTitleBlockProcessor.Scan(file))
+                    {
+                        if (!all.ContainsKey(pair.Key)) all[pair.Key] = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        all[pair.Key].UnionWith(pair.Value);
+                    }
+                } catch (System.Exception ex) { errors.Add(Path.GetFileName(file)+": "+ex.Message); }
             }
-            catch (System.Exception ex)
+            foreach (KeyValuePair<string, HashSet<string>> pair in all.OrderBy(x=>x.Key))
             {
-                MessageBox.Show("自动识别失败：" + ex.Message);
+                if (pair.Value.Count == 0) continue;
+                BatchTitleBlockProcessor.Options guess = BatchTitleBlockProcessor.Guess(pair.Key,pair.Value);
+                rules.Rows.Add(false,pair.Key,String.Join(", ",pair.Value.ToArray()),
+                    guess == null ? "" : guess.TitleTag, guess == null ? "" : guess.DrawingTag,
+                    guess == null ? "" : guess.PageTag, guess == null ? "" : guess.TotalTag);
             }
+            status.Text = "预读完成，请勾选角标并确认 TAG。";
+            if (errors.Count > 0) MessageBox.Show(String.Join("\r\n",errors.ToArray()));
         }
 
         private void PickOutput(object sender, EventArgs e)
@@ -429,11 +442,18 @@ namespace AutoCADBlockAttrPlugin
         private BatchTitleBlockProcessor.Options ReadOptions()
         {
             BatchTitleBlockProcessor.Options options = new BatchTitleBlockProcessor.Options();
-            options.BlockName = blockName.Text.Trim();
-            options.TitleTag = tags[0].Text.Trim();
-            options.DrawingTag = tags[1].Text.Trim();
-            options.PageTag = tags[2].Text.Trim();
-            options.TotalTag = tags[3].Text.Trim();
+            rules.EndEdit();
+            foreach (DataGridViewRow row in rules.Rows)
+            {
+                if (!Object.Equals(row.Cells[0].Value,true)) continue;
+                BatchTitleBlockProcessor.Options rule = new BatchTitleBlockProcessor.Options();
+                rule.BlockName = Convert.ToString(row.Cells[1].Value);
+                rule.TitleTag = Convert.ToString(row.Cells[3].Value).Trim();
+                rule.DrawingTag = Convert.ToString(row.Cells[4].Value).Trim();
+                rule.PageTag = Convert.ToString(row.Cells[5].Value).Trim();
+                rule.TotalTag = Convert.ToString(row.Cells[6].Value).Trim();
+                options.Rules.Add(rule);
+            }
             options.LeftToRight = left.Checked;
             options.AllowPartial = partial.Checked;
             return options;
@@ -442,10 +462,9 @@ namespace AutoCADBlockAttrPlugin
         private string CurrentSignature()
         {
             BatchTitleBlockProcessor.Options options = ReadOptions();
-            return String.Join("|", files.ToArray()) + "\\n" + options.BlockName + "\\n" +
-                options.TitleTag + "\\n" + options.DrawingTag + "\\n" + options.PageTag +
-                "\\n" + options.TotalTag + "\\n" + options.LeftToRight.ToString() +
-                "\\n" + options.AllowPartial.ToString();
+            return String.Join("|", files.Select(f=>f+":"+File.GetLastWriteTimeUtc(f).Ticks).ToArray()) + "|" +
+                String.Join("|", options.Rules.Select(r=>r.BlockName+":"+r.TitleTag+":"+r.DrawingTag+":"+r.PageTag+":"+r.TotalTag).ToArray()) +
+                options.LeftToRight.ToString()+options.AllowPartial.ToString();
         }
 
         private void PreviewFiles(object sender, EventArgs e)
