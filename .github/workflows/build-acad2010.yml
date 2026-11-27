@@ -93,8 +93,19 @@ jobs:
 
           Compress-Archive -Path $dlls.FullName -DestinationPath "dist_all/AutoCADBlockAttrPlugin-AutoCAD-${{ inputs.version || 'all' }}.zip" -Force
 
+      - name: Upload feature-branch build artifact
+        if: github.ref != 'refs/heads/master' && github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: AutoCADBlockAttrPlugin-batch-${{ github.sha }}
+          path: |
+            dist_all/*.dll
+            dist_all/*.zip
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Publish GitHub Release
-        if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/master')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: "v1.2.0-${{ inputs.version || 'all' }}-${{ github.run_number }}"
