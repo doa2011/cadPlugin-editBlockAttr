@@ -84,7 +84,7 @@ namespace AutoCADBlockAttrPlugin
                     foreach (ObjectId btrId in bt)
                     {
                         BlockTableRecord space = tr.GetObject(btrId, OpenMode.ForRead) as BlockTableRecord;
-                        if (space == null || (!space.IsLayout && !space.IsModelSpace)) continue;
+                        if (space == null || (!space.IsLayout && btrId != bt[BlockTableRecord.ModelSpace])) continue;
                         foreach (ObjectId id in space)
                         {
                             BlockReference br = tr.GetObject(id, OpenMode.ForRead) as BlockReference;
@@ -273,7 +273,7 @@ namespace AutoCADBlockAttrPlugin
             foreach (ObjectId btrId in bt)
             {
                 BlockTableRecord space = tr.GetObject(btrId, OpenMode.ForRead) as BlockTableRecord;
-                if (space == null || (!space.IsLayout && !space.IsModelSpace)) continue;
+                if (space == null || (!space.IsLayout && btrId != bt[BlockTableRecord.ModelSpace])) continue;
                 foreach (ObjectId id in space)
                 {
                     BlockReference br = tr.GetObject(id, OpenMode.ForRead) as BlockReference;
