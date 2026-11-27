@@ -89,10 +89,10 @@ namespace AutoCADBlockAttrPlugin
             try
             {
                 if (!File.Exists(file)) throw new FileNotFoundException("DWG 不存在", file);
-                if (String.IsNullOrWhiteSpace(options.BlockName))
+                if (String.IsNullOrEmpty(options.BlockName))
                     throw new InvalidOperationException("必须指定角标块名称，避免修改其他块。");
                 string[] tags = { options.TitleTag, options.DrawingTag, options.PageTag, options.TotalTag };
-                if (tags.Any(t => String.IsNullOrWhiteSpace(t)) ||
+                if (tags.Any(t => String.IsNullOrEmpty(t)) ||
                     tags.Distinct(StringComparer.OrdinalIgnoreCase).Count() != 4)
                     throw new InvalidOperationException("四个属性 TAG 必须填写且互不相同。");
 
@@ -160,7 +160,7 @@ namespace AutoCADBlockAttrPlugin
                     else result.Status = "可处理";
                 }
             }
-            catch (Exception ex)
+            catch (System.Exception ex)
             {
                 result.Status = "失败";
                 result.Error = ex.Message;
@@ -330,7 +330,7 @@ namespace AutoCADBlockAttrPlugin
         private void WriteFiles(object sender, EventArgs e)
         {
             if (files.Count == 0) { MessageBox.Show("请先选择 DWG 文件。"); return; }
-            if (String.IsNullOrWhiteSpace(output.Text)) { MessageBox.Show("请选择独立输出文件夹。"); return; }
+            if (String.IsNullOrEmpty(output.Text)) { MessageBox.Show("请选择独立输出文件夹。"); return; }
             string dir = Path.GetFullPath(output.Text);
             if (MessageBox.Show("即将处理 " + files.Count + " 个 DWG，保存为新文件到：\r\n" +
                 dir + "\r\n原 DWG 不会覆盖。确认？", "批量写入", MessageBoxButtons.YesNo,
@@ -345,7 +345,7 @@ namespace AutoCADBlockAttrPlugin
                 grid.Rows.Add(Path.GetFileName(file), r.DrawingNo, r.Title, r.Count,
                     r.Changed, r.Missing, r.Status, r.Error);
                 if (r.Status == "成功") ok++;
-                Application.DoEvents();
+                System.Windows.Forms.Application.DoEvents();
             }
             status.Text = "批量处理完成：" + ok + "/" + files.Count + " 个文件成功；其余见错误列。";
         }
