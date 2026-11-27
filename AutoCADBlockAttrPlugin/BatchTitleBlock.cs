@@ -19,7 +19,7 @@ namespace AutoCADBlockAttrPlugin
             public List<Options> Rules = new List<Options>();
             public int Start = 1;
             public int Total = 0;
-            public string SaveVersion = "原版本";
+            public string SaveVersion = "2010";
             public string TitleTag = "";
             public string DrawingTag = "";
             public string PageTag = "";
@@ -276,8 +276,7 @@ namespace AutoCADBlockAttrPlugin
                         if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
                         if (File.Exists(output))
                             throw new IOException("输出文件已存在，避免覆盖：" + output);
-                        DwgVersion version = options.SaveVersion == "原版本" ? db.OriginalFileVersion :
-                            (DwgVersion)Enum.Parse(typeof(DwgVersion), options.SaveVersion);
+                        DwgVersion version = (DwgVersion)Enum.Parse(typeof(DwgVersion), options.SaveVersion == "2018" ? "AC1032" : options.SaveVersion == "2013" ? "AC1027" : "AC1024");
                         db.SaveAs(output, version);
                         result.Status = "成功";
                     }
@@ -374,9 +373,11 @@ namespace AutoCADBlockAttrPlugin
             folder.Click += PickOutput; settings.Controls.Add(folder);
             output.Width = 180; settings.Controls.Add(output);
             saveVersion.DropDownStyle = ComboBoxStyle.DropDownList; saveVersion.Width = 100;
-            saveVersion.Items.Add("原版本");
-            foreach (string version in new string[] {"AC1015","AC1018","AC1021","AC1024","AC1027","AC1032"})
-                if (Enum.IsDefined(typeof(DwgVersion),version) && Convert.ToInt32(Enum.Parse(typeof(DwgVersion),version)) <= (int)DwgVersion.Current) saveVersion.Items.Add(version);
+            foreach (string year in new string[] {"2010","2013","2018"})
+            {
+                string version = year == "2018" ? "AC1032" : year == "2013" ? "AC1027" : "AC1024";
+                if (Enum.IsDefined(typeof(DwgVersion),version) && Convert.ToInt32(Enum.Parse(typeof(DwgVersion),version)) <= (int)DwgVersion.Current) saveVersion.Items.Add(year);
+            }
             saveVersion.SelectedIndex = 0;
             settings.Controls.Add(new Label { Text = "保存版本", AutoSize = true }); settings.Controls.Add(saveVersion);
             Button clearOutput = new Button { Text = "清空输出", Width = 80 }; clearOutput.Click += delegate { output.Clear(); }; settings.Controls.Add(clearOutput);
