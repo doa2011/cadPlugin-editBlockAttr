@@ -343,7 +343,7 @@ namespace AutoCADBlockAttrPlugin
             Controls.Add(layout);
 
             FlowLayoutPanel bar = new FlowLayoutPanel();
-            bar.Dock = DockStyle.Fill;
+            bar.Dock = DockStyle.Fill; bar.WrapContents = false; bar.AutoScroll = true;
             Button pick = new Button(); pick.Text = "选择多个 DWG"; pick.Width = 125; pick.Click += PickFiles;
             Button detect = new Button(); detect.Text = "预读全部块"; detect.Width = 125; detect.Click += DetectFirstFile;
             Button inspect = new Button(); inspect.Text = "读取预览"; inspect.Width = 100; inspect.Click += PreviewFiles;
@@ -389,6 +389,7 @@ namespace AutoCADBlockAttrPlugin
             grid.Columns.Add("Missing", "缺失属性");
             grid.Columns.Add("Status", "状态");
             grid.Columns.Add("Details", "提示");
+            foreach (DataGridViewColumn column in grid.Columns) column.SortMode = DataGridViewColumnSortMode.NotSortable;
             layout.Controls.Add(grid, 0, 2);
             status.Dock = DockStyle.Fill; status.TextAlign = ContentAlignment.MiddleLeft;
             status.Text = "先选择 DWG，指定块名与四个实际 TAG，读取预览后再确认写入。输出为新文件，原图保持不变。";
