@@ -348,7 +348,11 @@ namespace AutoCADBlockAttrPlugin
             Button detect = new Button(); detect.Text = "预读全部块"; detect.Width = 125; detect.Click += DetectFirstFile;
             Button inspect = new Button(); inspect.Text = "读取预览"; inspect.Width = 100; inspect.Click += PreviewFiles;
             Button write = new Button(); write.Text = "确认批量写入"; write.Width = 135; write.Click += WriteFiles;
-            bar.Controls.Add(pick); bar.Controls.Add(detect); bar.Controls.Add(inspect); bar.Controls.Add(write);
+            Button remove = new Button { Text = "移除选中文件", Width = 125 };
+            remove.Click += RemoveFiles;
+            Button clear = new Button { Text = "清空列表", Width = 100 };
+            clear.Click += delegate { if (files.Count > 0 && MessageBox.Show("清空待处理列表？不会删除原始文件。", "确认", MessageBoxButtons.YesNo) == DialogResult.Yes) { files.Clear(); RefreshFileList(); } };
+            bar.Controls.Add(pick); bar.Controls.Add(remove); bar.Controls.Add(clear); bar.Controls.Add(detect); bar.Controls.Add(inspect); bar.Controls.Add(write);
             layout.Controls.Add(bar, 0, 0);
 
             FlowLayoutPanel settings = new FlowLayoutPanel { Dock = DockStyle.Fill };
@@ -374,6 +378,9 @@ namespace AutoCADBlockAttrPlugin
             grid.AllowUserToDeleteRows = false; grid.ReadOnly = true;
             grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
             grid.RowHeadersVisible = false;
+            grid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+            grid.MultiSelect = true;
+            grid.KeyDown += delegate(object sender, KeyEventArgs e) { if (e.KeyCode == Keys.Delete) { RemoveFiles(sender,e); e.Handled = true; e.SuppressKeyPress = true; } };
             grid.Columns.Add("File", "DWG 文件");
             grid.Columns.Add("Drawing", "图号");
             grid.Columns.Add("Title", "图名");
@@ -396,16 +403,39 @@ namespace AutoCADBlockAttrPlugin
                 if (dlg.ShowDialog(this) != DialogResult.OK) return;
                 foreach (string file in dlg.FileNames)
                     if (!files.Contains(file, StringComparer.OrdinalIgnoreCase)) files.Add(file);
-                grid.Rows.Clear();
-                foreach (string file in files) grid.Rows.Add(Path.GetFileName(file));
-                previewSignature = "";
-            DetectFirstFile(sender,e);
+                RefreshFileList();
             }
+        }
+
+        private void RemoveFiles(object sender, EventArgs e)
+        {
+            List<int> indices = new List<int>();
+            foreach (DataGridViewRow row in grid.SelectedRows)
+                if (row.Index >= 0 && row.Index < files.Count) indices.Add(row.Index);
+            if (indices.Count == 0) return;
+            foreach (int index in indices.Distinct().OrderByDescending(x => x)) files.RemoveAt(index);
+            RefreshFileList();
+        }
+
+        private void RefreshFileList()
+        {
+            grid.Rows.Clear();
+            foreach (string file in files)
+            {
+                int index = grid.Rows.Add(Path.GetFileName(file));
+                grid.Rows[index].Cells[0].ToolTipText = file;
+            }
+            previewSignature = "";
+            if (files.Count == 0) { rules.Rows.Clear(); status.Text = "未选择文件。"; return; }
+            DetectFirstFile(this, EventArgs.Empty);
         }
 
         private void DetectFirstFile(object sender, EventArgs e)
         {
             if (files.Count == 0) { MessageBox.Show("请先选择 DWG 文件。"); return; }
+            Dictionary<string, object[]> previous = new Dictionary<string, object[]>(StringComparer.OrdinalIgnoreCase);
+            rules.EndEdit();
+            foreach (DataGridViewRow row in rules.Rows) { object[] values = new object[7]; for (int i=0;i<7;i++) values[i]=row.Cells[i].Value; previous[Convert.ToString(values[1])] = values; }
             rules.Rows.Clear(); previewSignature = "";
             Dictionary<string, HashSet<string>> all = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
             List<string> errors = new List<string>();
@@ -423,6 +453,8 @@ namespace AutoCADBlockAttrPlugin
             {
                 if (pair.Value.Count == 0) continue;
                 BatchTitleBlockProcessor.Options guess = BatchTitleBlockProcessor.Guess(pair.Key,pair.Value);
+                object[] old;
+                if (previous.TryGetValue(pair.Key,out old)) { old[2]=String.Join(", ",pair.Value.ToArray()); rules.Rows.Add(old); continue; }
                 rules.Rows.Add(false,pair.Key,String.Join(", ",pair.Value.ToArray()),
                     guess == null ? "" : guess.TitleTag, guess == null ? "" : guess.DrawingTag,
                     guess == null ? "" : guess.PageTag, guess == null ? "" : guess.TotalTag);
