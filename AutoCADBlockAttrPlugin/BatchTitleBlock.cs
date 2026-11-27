@@ -383,9 +383,11 @@ namespace AutoCADBlockAttrPlugin
         private string previewSignature = "";
 
 
-        public BatchTitleBlockForm()
+        public BatchTitleBlockForm() : this(false) { }
+
+        public BatchTitleBlockForm(bool catalogOnly)
         {
-            Text = "批量角标修改 - AutoCAD DWG";
+            Text = catalogOnly ? "图纸目录 - 选择文件及角标" : "批量角标修改 - AutoCAD DWG";
             Width = 1120; Height = 740; MinimumSize = new Size(900, 630);
             StartPosition = FormStartPosition.CenterParent;
             TableLayoutPanel layout = new TableLayoutPanel();
@@ -408,7 +410,7 @@ namespace AutoCADBlockAttrPlugin
             Button clear = new Button { Text = "清空列表", Width = 100 };
             clear.Click += delegate { if (files.Count > 0 && MessageBox.Show("清空待处理列表？不会删除原始文件。", "确认", MessageBoxButtons.YesNo) == DialogResult.Yes) { files.Clear(); RefreshFileList(); } };
             Button catalog = new Button { Text = "生成图纸目录", Width = 125 }; catalog.Click += delegate { if(files.Count==0) { MessageBox.Show("请先选择 DWG 文件"); return; } using(CatalogForm form=new CatalogForm(files,ReadOptions())) form.ShowDialog(this); };
-            bar.Controls.Add(catalog); bar.Controls.Add(pick); bar.Controls.Add(remove); bar.Controls.Add(clear); bar.Controls.Add(detect); bar.Controls.Add(inspect); bar.Controls.Add(write);
+            bar.Controls.Add(catalog); bar.Controls.Add(pick); bar.Controls.Add(remove); bar.Controls.Add(clear); bar.Controls.Add(detect); if (!catalogOnly) { bar.Controls.Add(inspect); bar.Controls.Add(write); }
             layout.Controls.Add(bar, 0, 0);
 
             FlowLayoutPanel settings = new FlowLayoutPanel { Dock = DockStyle.Fill };
@@ -457,7 +459,7 @@ namespace AutoCADBlockAttrPlugin
             foreach (DataGridViewColumn column in grid.Columns) column.SortMode = DataGridViewColumnSortMode.NotSortable;
             layout.Controls.Add(grid, 0, 2);
             status.Dock = DockStyle.Fill; status.TextAlign = ContentAlignment.MiddleLeft;
-            status.Text = "先选择 DWG，指定块名与四个实际 TAG，读取预览后再确认写入。输出目录为空时覆盖原图，执行前确认。";
+            status.Text = catalogOnly ? "选择 DWG、确认角标映射，再生成目录；不会修改原始图纸。" : "先选择 DWG，指定块名与四个实际 TAG，读取预览后再确认写入。输出目录为空时覆盖原图，执行前确认。";
             layout.Controls.Add(status, 0, 3);
         }
 
@@ -742,7 +744,7 @@ namespace AutoCADBlockAttrPlugin
                     }
                     x.Append("</sheetData><mergeCells><mergeCell ref=\"A1:G1\"/><mergeCell ref=\"A2:A3\"/><mergeCell ref=\"B2:C3\"/>");
                     for(int i=4;i<=41;i++)x.Append("<mergeCell ref=\"D"+i+":E"+i+"\"/>");
-                    x.Append("</mergeCells><printOptions horizontalCentered=\"1\"/><pageMargins left=\"0.3\" right=\"0.3\" top=\"0.3\" bottom=\"0.3\" header=\"0.1\" footer=\"0.1\"/><pageSetup paperSize=\"8\" orientation=\"portrait\" fitToWidth=\"1\" fitToHeight=\"1\"/></worksheet>");
+                    x.Append("</mergeCells><printOptions horizontalCentered=\"1\"/><pageMargins left=\"0.3\" right=\"0.3\" top=\"0.3\" bottom=\"0.3\" header=\"0.1\" footer=\"0.1\"/><pageSetup paperSize=\"8\" orientation=\"landscape\" fitToWidth=\"1\" fitToHeight=\"1\"/></worksheet>");
                     Put(part,x.ToString());
                 }
                 Put(wb,"<workbook xmlns=\""+Ns+"\" xmlns:r=\""+Rel.TrimEnd('/')+"\"><sheets>"+sheets+"</sheets><definedNames>"+names+"</definedNames></workbook>");
